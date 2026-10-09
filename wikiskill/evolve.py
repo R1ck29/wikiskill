@@ -207,10 +207,11 @@ def task_fingerprint(suite: Suite) -> Dict[str, List[str]]:
 
 
 def _note_purpose(skill_dir: Path, k: int, pending: Dict[str, Any]) -> None:
-    """Keep PURPOSE.md's Evolution History in step with accepted patches."""
-    if pending["proposal"].get("action") == "patch":
-        append_text(skill_dir / "PURPOSE.md",
-                    f"\n- Iteration {k}: patch accepted (validation {pending['score']:.4f}).\n")
+    """Record the gating result in PURPOSE.md's Evolution History (the proposer writes it before gating)."""
+    action = pending["proposal"].get("action")
+    append_text(skill_dir / "PURPOSE.md",
+                f"\n- Iteration {k}: {action} accepted by validation gating "
+                f"({pending['r_best_before']:.4f} -> {pending['score']:.4f}).\n")
 
 
 def _record_skill_impact(ws: Workspace, k: int, pending: Dict[str, Any]) -> None:

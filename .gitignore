@@ -9,4 +9,4 @@ review/
 *.bak
 # local planning state of the development harness
 task-graph.json
-.graph-evidence-*.txt
+.graph-evidence-*

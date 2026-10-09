@@ -50,6 +50,8 @@ class EvolveLoopTest(unittest.TestCase):
         self.assertIn("## Iteration 2 - ACCEPTED", impact)
         self.assertIn("Patterns: partial-answers.md", impact)  # PURPOSE.md of the proposal is kept
         self.assertTrue((ws.wiki / "patterns" / "partial-answers.md").is_file())  # wiki kept after rejection
+        purpose = (ws.skills / "report-total" / "PURPOSE.md").read_text(encoding="utf-8")
+        self.assertIn("Iteration 2: create accepted by validation gating (0.0000 -> 1.0000)", purpose)
         logs = (ws.wiki / "logs.md").read_text(encoding="utf-8")
         self.assertEqual(logs.count("## Iteration "), 2)
         self.assertTrue((ws.raw_dir(1) / "traces" / "t1.md").is_file())
