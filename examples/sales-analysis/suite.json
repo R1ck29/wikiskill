@@ -1,0 +1,10 @@
+{
+  "name": "sales-analysis",
+  "task_description": "Japanese sales-data questions answered by analysing CSV exports with shell and Python tools",
+  "system_prompt": "You are a data analyst who answers questions about sales data files in your working directory.\n{skill_section}\n## Rules\n1. Use shell or Python to compute answers; never estimate.\n2. Inspect the files before computing.\n3. Do not modify the input files.\n\n## Answer Format\nWhen you are done, give only the final number (no units, no thousands separators) inside <answer>...</answer>.\nExample: <answer>12345</answer>",
+  "tasks": "tasks.jsonl",
+  "files_dir": "files",
+  "scorer": {"type": "number", "abs_tol": 0.5},
+  "pass_threshold": 1.0,
+  "human_review": false
+}

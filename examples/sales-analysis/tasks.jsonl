@@ -1,0 +1,24 @@
+{"id": "sales-01", "split": "train", "prompt": "sales.csv の 名古屋店 の 2026年1月 の純売上（円）はいくらですか。", "answer": "4090", "files": ["sales-01/sales.csv", "DATA_README.md"]}
+{"id": "sales-02", "split": "train", "prompt": "sales.csv で商品「マグカップ」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "5", "files": ["sales-02/sales.csv", "DATA_README.md"]}
+{"id": "sales-03", "split": "train", "prompt": "sales.csv の 福岡店 の 2026年3月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "2340", "files": ["sales-03/sales.csv", "DATA_README.md"]}
+{"id": "sales-04", "split": "train", "prompt": "sales.csv の 大阪店 の 2026年1月 の純売上（円）はいくらですか。", "answer": "2545", "files": ["sales-04/sales.csv", "DATA_README.md"]}
+{"id": "sales-05", "split": "train", "prompt": "sales.csv で商品「紅茶」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "8", "files": ["sales-05/sales.csv", "DATA_README.md"]}
+{"id": "sales-06", "split": "train", "prompt": "sales.csv の 福岡店 の 2026年2月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "7227", "files": ["sales-06/sales.csv", "DATA_README.md"]}
+{"id": "sales-07", "split": "train", "prompt": "sales.csv の 名古屋店 の 2026年2月 の純売上（円）はいくらですか。", "answer": "3636", "files": ["sales-07/sales.csv", "DATA_README.md"]}
+{"id": "sales-08", "split": "train", "prompt": "sales.csv で商品「マグカップ」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "10", "files": ["sales-08/sales.csv", "DATA_README.md"]}
+{"id": "sales-09", "split": "val", "prompt": "sales.csv の 名古屋店 の 2026年3月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "4000", "files": ["sales-09/sales.csv", "DATA_README.md"]}
+{"id": "sales-10", "split": "val", "prompt": "sales.csv の 大阪店 の 2026年2月 の純売上（円）はいくらですか。", "answer": "-16000", "files": ["sales-10/sales.csv", "DATA_README.md"]}
+{"id": "sales-11", "split": "val", "prompt": "sales.csv で商品「ドリッパー」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "7", "files": ["sales-11/sales.csv", "DATA_README.md"]}
+{"id": "sales-12", "split": "val", "prompt": "sales.csv の 東京店 の 2026年2月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "4363", "files": ["sales-12/sales.csv", "DATA_README.md"]}
+{"id": "sales-13", "split": "val", "prompt": "sales.csv の 名古屋店 の 2026年2月 の純売上（円）はいくらですか。", "answer": "6181", "files": ["sales-13/sales.csv", "DATA_README.md"]}
+{"id": "sales-14", "split": "val", "prompt": "sales.csv で商品「ドリッパー」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "11", "files": ["sales-14/sales.csv", "DATA_README.md"]}
+{"id": "sales-15", "split": "test", "prompt": "sales.csv の 大阪店 の 2026年3月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "2000", "files": ["sales-15/sales.csv", "DATA_README.md"]}
+{"id": "sales-16", "split": "test", "prompt": "sales.csv の 大阪店 の 2026年1月 の純売上（円）はいくらですか。", "answer": "2545", "files": ["sales-16/sales.csv", "DATA_README.md"]}
+{"id": "sales-17", "split": "test", "prompt": "sales.csv で商品「紅茶」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "8", "files": ["sales-17/sales.csv", "DATA_README.md"]}
+{"id": "sales-18", "split": "test", "prompt": "sales.csv の 福岡店 の 2026年2月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "3151", "files": ["sales-18/sales.csv", "DATA_README.md"]}
+{"id": "sales-19", "split": "test", "prompt": "sales.csv の 福岡店 の 2026年3月 の純売上（円）はいくらですか。", "answer": "18818", "files": ["sales-19/sales.csv", "DATA_README.md"]}
+{"id": "sales-20", "split": "test", "prompt": "sales.csv で商品「紅茶」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "9", "files": ["sales-20/sales.csv", "DATA_README.md"]}
+{"id": "sales-21", "split": "test", "prompt": "sales.csv の 福岡店 の 2026年1月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "4745", "files": ["sales-21/sales.csv", "DATA_README.md"]}
+{"id": "sales-22", "split": "test", "prompt": "sales.csv の 福岡店 の 2026年3月 の純売上（円）はいくらですか。", "answer": "7636", "files": ["sales-22/sales.csv", "DATA_README.md"]}
+{"id": "sales-23", "split": "test", "prompt": "sales.csv で商品「ドリッパー」の完了した注文は何件ですか（全店舗・全期間）。", "answer": "8", "files": ["sales-23/sales.csv", "DATA_README.md"]}
+{"id": "sales-24", "split": "test", "prompt": "sales.csv の 福岡店 の 2026年2月 の完了注文1件あたりの平均金額（円、整数）はいくらですか。", "answer": "4181", "files": ["sales-24/sales.csv", "DATA_README.md"]}

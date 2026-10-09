@@ -1,0 +1,29 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ["3.9", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit tests (standard library only, no network)
+        run: python -m unittest discover -s tests -t . -v
+      - name: CLI smoke test
+        run: |
+          python -m wikiskill --version
+          python -m wikiskill check --suite examples/sales-analysis --no-call --backend codex
+        continue-on-error: false
+        shell: bash
+      - name: Example answers re-verified with SQLite
+        run: python examples/sales-analysis/make_tasks.py --verify

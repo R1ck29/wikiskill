@@ -1,0 +1,13 @@
+{
+  "name": "translation-ja-en",
+  "task_description": "Japanese-to-English translation of short business documents using the company glossary",
+  "system_prompt": "You are a professional Japanese-to-English business translator.\n{skill_section}\n## Answer Format\nPut only the English translation inside <answer>...</answer>.",
+  "tasks": "tasks.jsonl",
+  "files_dir": "files",
+  "scorer": {
+    "type": "llm_judge",
+    "rubric": "Company glossary (Japanese = required English): 稟議 = approval request; 御中 = To <organisation name>: (no other honorific); お客様 = customer; 見積書 = quotation; 発注書 = purchase order; 納期 = delivery date; 請求書 = invoice; 検収 = acceptance inspection. Score 1.0 when the meaning matches the reference, every glossary term that appears in the source is translated exactly as listed, and the tone is polite business English. Deduct 0.5 for each glossary term not translated as listed. Score 0 for a wrong meaning. Judge only the agent's response text."
+  },
+  "pass_threshold": 0.8,
+  "human_review": false
+}

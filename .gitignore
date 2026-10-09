@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.DS_Store
+# run outputs (workspaces and evaluation folders hold traces of your data)
+workspaces/
+runs/
+eval/
+review/
+*.bak
+# local planning state of the development harness
+task-graph.json
+.graph-evidence-*.txt

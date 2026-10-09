@@ -1,0 +1,10 @@
+{"id": "tr-01", "split": "train", "prompt": "次の社内文書を英語に翻訳してください。\n\n来週までに見積書を送付いたします。", "answer": "We will send you the quotation by next week.", "files": ["glossary.csv"]}
+{"id": "tr-02", "split": "train", "prompt": "次の社内文書を英語に翻訳してください。\n\n稟議が承認され次第、発注書を発行します。", "answer": "We will issue the purchase order as soon as the approval request is approved.", "files": ["glossary.csv"]}
+{"id": "tr-03", "split": "train", "prompt": "次の社内文書を英語に翻訳してください。\n\n納期について再度ご確認いただけますでしょうか。", "answer": "Could you please confirm the delivery date again?", "files": ["glossary.csv"]}
+{"id": "tr-04", "split": "train", "prompt": "次の社内文書を英語に翻訳してください。\n\n株式会社ABC 御中\n請求書を添付いたしました。", "answer": "To ABC Co., Ltd.: Please find the invoice attached.", "files": ["glossary.csv"]}
+{"id": "tr-05", "split": "val", "prompt": "次の社内文書を英語に翻訳してください。\n\n検収が完了しましたので、請求書をお送りください。", "answer": "The acceptance inspection is complete, so please send us the invoice.", "files": ["glossary.csv"]}
+{"id": "tr-06", "split": "val", "prompt": "次の社内文書を英語に翻訳してください。\n\nお客様からの要望を踏まえ、見積書を修正しました。", "answer": "We have revised the quotation based on the customer's request.", "files": ["glossary.csv"]}
+{"id": "tr-07", "split": "val", "prompt": "次の社内文書を英語に翻訳してください。\n\n発注書の納期を一週間延長してください。", "answer": "Please extend the delivery date on the purchase order by one week.", "files": ["glossary.csv"]}
+{"id": "tr-08", "split": "test", "prompt": "次の社内文書を英語に翻訳してください。\n\n稟議の承認には三営業日かかります。", "answer": "Approval of the approval request takes three business days.", "files": ["glossary.csv"]}
+{"id": "tr-09", "split": "test", "prompt": "次の社内文書を英語に翻訳してください。\n\nXYZ株式会社 御中\n見積書を再送いたします。", "answer": "To XYZ Corporation: We are resending the quotation.", "files": ["glossary.csv"]}
+{"id": "tr-10", "split": "test", "prompt": "次の社内文書を英語に翻訳してください。\n\n検収後三十日以内に請求書をお支払いください。", "answer": "Please pay the invoice within thirty days after acceptance inspection.", "files": ["glossary.csv"]}
