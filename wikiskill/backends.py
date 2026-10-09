@@ -59,13 +59,18 @@ DEFAULTS: Dict[str, Dict[str, object]] = {
 }
 
 
-_MODEL_RE = re.compile(r"[\w.:/@+-]+")  # Anthropic, OpenAI and Bedrock ids / ARNs
+_MODEL_RE = re.compile(r"\w[\w.:/@+-]*")  # Anthropic, OpenAI and Bedrock ids / ARNs (never a flag)
 _LIVE: set = set()  # running CLI processes, so Ctrl+C in the main thread can stop worker-thread runs
 _LIVE_LOCK = threading.Lock()
+_STOP = threading.Event()  # set on Ctrl+C: no new CLI starts and no retries until reset_stop()
 
 
 class BackendError(RuntimeError):
     """The CLI could not be run or returned no usable answer."""
+
+
+class StoppedError(BackendError):
+    """The run was stopped by the user (Ctrl+C); never retried."""
 
 
 @dataclass(frozen=True)
@@ -153,10 +158,11 @@ class CLIBackend:
             try:
                 return call()
             except BackendError as e:
-                if attempt == attempts:
+                if attempt == attempts or _STOP.is_set():
                     raise
                 log.warning("%s call failed (attempt %d/%d): %s", self.name, attempt, attempts, e)
-                time.sleep(self.config.retry_wait * attempt)
+                if _STOP.wait(self.config.retry_wait * attempt):  # wakes early on Ctrl+C
+                    raise StoppedError("stopped by the user") from e
 
     def _model_args(self) -> List[str]:
         return [self.config.model_flag, self.config.model] if self.config.model else []
@@ -183,9 +189,11 @@ def run_process(argv: List[str], stdin: str, cwd: Path, timeout: float) -> Tuple
     """
     extra = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
              else {"start_new_session": True})
-    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, encoding="utf-8", errors="replace", cwd=str(cwd), **extra)
-    with _LIVE_LOCK:
+    with _LIVE_LOCK:  # checked under the lock so kill_all_running cannot miss a process
+        if _STOP.is_set():
+            raise StoppedError("stopped by the user")
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, encoding="utf-8", errors="replace", cwd=str(cwd), **extra)
         _LIVE.add(proc)
     try:
         stdout, stderr = proc.communicate(stdin, timeout=timeout)
@@ -213,11 +221,17 @@ def run_process(argv: List[str], stdin: str, cwd: Path, timeout: float) -> Tuple
 
 
 def kill_all_running() -> None:
-    """Stop every CLI started by run_process (used when the user presses Ctrl+C)."""
+    """Stop every CLI started by run_process and refuse new ones (used when the user presses Ctrl+C)."""
     with _LIVE_LOCK:
+        _STOP.set()
         procs = list(_LIVE)
     for proc in procs:
         _kill_tree(proc)
+
+
+def reset_stop() -> None:
+    """Allow CLI runs again (called at the start of each batch of rollouts)."""
+    _STOP.clear()
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:

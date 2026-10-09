@@ -216,6 +216,8 @@ class WorkspaceTest(unittest.TestCase):
                     with ws.lock():
                         pass
             self.assertFalse((ws.root / "evolve.lock").exists())
+            with ws.lock():
+                (ws.root / "evolve.lock").unlink()  # removed by hand during the run: still exits cleanly
             ws.save_state({"iteration": 1})
             self.assertEqual(ws.load_state(), {"iteration": 1})
 

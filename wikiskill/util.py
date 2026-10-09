@@ -20,14 +20,18 @@ def is_windows_reserved(name: str) -> bool:
     return name.split(".")[0].lower() in WINDOWS_RESERVED
 
 
+def _formula_like(value: str) -> bool:
+    return value.lstrip("'").startswith(_FORMULA_START)
+
+
 def csv_cell(value: str) -> str:
     """Prefix ' so spreadsheet apps show text that starts like a formula instead of running it."""
-    return "'" + value if value.startswith(_FORMULA_START) else value
+    return "'" + value if _formula_like(value) else value
 
 
 def csv_value(cell: str) -> str:
-    """Undo csv_cell."""
-    return cell[1:] if cell.startswith("'") and cell[1:].startswith(_FORMULA_START) else cell
+    """Undo csv_cell exactly (also for text that itself starts with ')."""
+    return cell[1:] if cell.startswith("'") and _formula_like(cell[1:]) else cell
 
 
 def read_text(path: Path) -> str:

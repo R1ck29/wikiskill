@@ -55,10 +55,15 @@ class Workspace:
                                "If none is (e.g. the computer crashed), delete the file and retry.") from None
         try:
             os.write(fd, str(os.getpid()).encode("ascii"))
+        finally:
             os.close(fd)
+        try:
             yield
         finally:
-            path.unlink()
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
 
     # ----- state -------------------------------------------------------------
     def load_state(self) -> Optional[Dict[str, Any]]:

@@ -140,6 +140,28 @@ class FailureTest(FakeCLITestCase):
         self.assertTrue(result.infra_error)
         self.assertIn("timed out", result.error)
 
+    def test_ctrl_c_during_parallel_rollouts_stops_everything(self):
+        """Reviewer scenario: retries must not restart CLIs after Ctrl+C, and no process may survive."""
+        import _thread
+        import threading
+        from wikiskill import backends
+        from wikiskill.config import Suite, Task
+        from wikiskill.rollout import run_tasks
+        backend = self.backend_with("claude", retries=2, retry_wait=10, timeout=120)
+        self.addCleanup(backends.reset_stop)  # the stop flag is process-wide; later tests need it cleared
+        root = Path(self.tmp.name)
+        (root / "files").mkdir()
+        suite = Suite("s", root, "d", "{skill_section}", {"type": "exact"}, 1.0, False, root / "t", root / "files", ())
+        tasks = [Task(f"t{i}", "train", "q", answer="1") for i in range(3)]
+        threading.Timer(2.0, _thread.interrupt_main).start()  # what a terminal Ctrl+C does
+        started = time.monotonic()
+        with mock.patch.dict(os.environ, {"FAKE_CLI_HANG": "1"}):
+            with self.assertRaises(KeyboardInterrupt):
+                run_tasks(backend, suite, tasks, [], root / "stage", workers=3)
+        self.assertLess(time.monotonic() - started, 30)  # no 10 s retry waits, no 60 s hangs
+        self.assertEqual(len(self.calls()), 3)  # each task started once; nothing was restarted
+        self.assertEqual(backends._LIVE, set())  # every CLI was stopped before returning
+
     def test_interrupt_kills_process_tree(self):
         from wikiskill import backends
         killed = []
@@ -165,8 +187,11 @@ class FailureTest(FakeCLITestCase):
             load_backend_config("claude", config_path=config_path)
         with self.assertRaises(ConfigError):
             load_backend_config("gemini")
-        with self.assertRaises(ConfigError):
-            load_backend_config("claude", model="sonnet & del *")
+        for bad_model in ("sonnet & del *", "--dangerously-skip-permissions"):
+            with self.assertRaises(ConfigError):
+                load_backend_config("claude", model=bad_model)
+        self.assertEqual(load_backend_config("claude", model="arn:aws:bedrock:us-east-1:1:x/y").model,
+                         "arn:aws:bedrock:us-east-1:1:x/y")
 
 
 if __name__ == "__main__":

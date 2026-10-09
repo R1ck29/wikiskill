@@ -157,10 +157,11 @@ class HumanReviewTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             sheet = Path(tmp) / "r.csv"
             write_review_sheet(sheet, [{"task_id": "id:a", "verdict": "OK", "agent_answer": "=HYPERLINK(1)",
-                                        "comment": "-16000"}])
+                                        "comment": "-16000", "prompt": "'=already quoted"}])
             self.assertIn("'=HYPERLINK", sheet.read_text(encoding="utf-8-sig"))
             row = read_review_rows(sheet)[0]
-            self.assertEqual((row["agent_answer"], row["comment"]), ("=HYPERLINK(1)", "-16000"))
+            self.assertEqual((row["agent_answer"], row["comment"], row["prompt"]),
+                             ("=HYPERLINK(1)", "-16000", "'=already quoted"))  # exact round trip
 
     def test_reads_excel_shift_jis_csv(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -16,7 +16,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from .backends import kill_all_running
+from .backends import kill_all_running, reset_stop
 from .config import Suite, Task
 from .scoring import Outcome, extract_answer
 from .skills import render_skill_section
@@ -115,6 +115,7 @@ def run_tasks(backend: Any, suite: Suite, tasks: List[Task], skills: List[Tuple[
                  "" if result.ok else f" (failed: {result.error[:120]})")
         return result
 
+    reset_stop()
     pool = ThreadPoolExecutor(max_workers=max(1, workers))
     futures = [pool.submit(one, task) for task in tasks]
     try:
@@ -126,8 +127,8 @@ def run_tasks(backend: Any, suite: Suite, tasks: List[Task], skills: List[Tuple[
     except BaseException:
         for future in futures:
             future.cancel()
-        kill_all_running()
-        pool.shutdown(wait=False)
+        kill_all_running()  # running CLIs are killed and no worker may start or retry one
+        pool.shutdown(wait=True)  # returns quickly; the workspace lock is released only after this
         raise
     pool.shutdown(wait=True)
     results = [f.result() for f in futures]
