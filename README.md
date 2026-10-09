@@ -1,5 +1,7 @@
 # WikiSkill
 
+[![tests](https://github.com/R1ck29/wikiskill/actions/workflows/test.yml/badge.svg)](https://github.com/R1ck29/wikiskill/actions/workflows/test.yml)
+
 AI エージェント（Claude Code / Codex）に業務タスクを繰り返し解かせ、その実行記録から
 **「スキル（SKILL.md）」を自動で育てる**ツールです。論文
 [WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution (arXiv:2608.27454)](https://arxiv.org/abs/2608.27454)
@@ -76,7 +78,7 @@ python -m wikiskill export workspaces/sales --dest .claude/skills
 ## 自分の業務で使う
 
 1. 同じ種類の業務（例:「月次売上の集計」「契約書の英訳」）を 1 つの**スイート**にまとめます。
-   train / val / test に分け、論文と同程度（train 15〜80、val 10〜40 件）あると安定します。
+   train / val / test に分け、論文と同程度（train 16〜80、val 10〜40 件）あると安定します。
 2. 正解の決め方を選びます。
 
 | 業務の性質 | 採点方法 | 例 |

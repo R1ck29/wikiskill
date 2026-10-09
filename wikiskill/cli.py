@@ -51,7 +51,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wikiskill", description="WikiSkill: evolve agent skills with a persistent wiki.")
     parser.add_argument("--version", action="version", version=f"wikiskill {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
+    _add_run_commands(sub)
+    _add_helper_commands(sub)
+    return parser
 
+
+def _add_run_commands(sub: Any) -> None:
+    """Commands that run agents: check, evolve, evaluate, review."""
     p = sub.add_parser("check", help="check Python, the CLI backend and (optionally) a suite")
     _backend_args(p)
     p.add_argument("--suite", type=Path, help="also validate this suite")
@@ -81,12 +87,6 @@ def build_parser() -> argparse.ArgumentParser:
     _run_args(p)
     p.set_defaults(func=cmd_evaluate)
 
-    p = sub.add_parser("compare", help="paired bootstrap test between two report.json files (B minus A)")
-    p.add_argument("report_a", type=Path)
-    p.add_argument("report_b", type=Path)
-    p.add_argument("--iterations", type=int, default=1000)
-    p.set_defaults(func=cmd_compare)
-
     p = sub.add_parser("review", help="hybrid mode: run tasks once and write a sheet for a person to check")
     p.add_argument("suite", type=Path)
     p.add_argument("--out", type=Path, required=True)
@@ -94,6 +94,15 @@ def build_parser() -> argparse.ArgumentParser:
     _backend_args(p)
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_review)
+
+
+def _add_helper_commands(sub: Any) -> None:
+    """Commands that only read or write files: compare, review-apply, status, export."""
+    p = sub.add_parser("compare", help="paired bootstrap test between two report.json files (B minus A)")
+    p.add_argument("report_a", type=Path)
+    p.add_argument("report_b", type=Path)
+    p.add_argument("--iterations", type=int, default=1000)
+    p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("review-apply", help="hybrid mode: copy reviewed answers/rubrics into the tasks file")
     p.add_argument("suite", type=Path)
@@ -110,7 +119,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="e.g. .claude/skills (Claude Code) or .agents/skills (Codex)")
     p.add_argument("--force", action="store_true", help="overwrite skills that already exist in --dest")
     p.set_defaults(func=cmd_export)
-    return parser
 
 
 def _backend_args(p: argparse.ArgumentParser) -> None:
