@@ -7,6 +7,7 @@ Human review: results are written to a CSV sheet; a person fills in `verdict`
 from __future__ import annotations
 
 import csv
+import hashlib
 import importlib.util
 import io
 import math
@@ -17,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
 from .config import Suite, Task
-from .util import extract_json_object, truncate
+from .util import csv_cell, csv_value, extract_json_object, truncate
 
 if TYPE_CHECKING:
     from .rollout import RolloutResult
@@ -27,7 +28,9 @@ _NUMBER_RE = re.compile(r"[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?")
 ID_PREFIX = "id:"  # keeps Excel from turning ids like 001 or 2026-01 into numbers or dates
 OK_WORDS = {"ok", "pass", "yes", "1", "○", "〇", "合格", "正解"}
 NG_WORDS = {"ng", "fail", "no", "0", "×", "✕", "要修正", "修正", "不合格", "不正解"}
-REVIEW_COLUMNS = ["task_id", "verdict", "comment", "prompt", "reference", "agent_answer", "auto_score", "output_dir"]
+REVIEW_COLUMNS = ["task_id", "verdict", "comment", "prompt", "reference", "agent_answer", "auto_score",
+                  "output_dir", "answer_key"]
+TEXT_COLUMNS = ("comment", "prompt", "reference", "agent_answer", "corrected_answer", "rubric_note")
 
 
 class HumanReviewPending(Exception):
@@ -141,7 +144,7 @@ class Scorer:
     def _score_judge(self, task: Task, result: "RolloutResult") -> Tuple[float, str]:
         if self.judge is None:
             raise ValueError("llm_judge scorer needs a judge backend")
-        rubric = task.rubric or self.cfg.get("rubric", "")
+        rubric = "\n".join(r for r in (self.cfg.get("rubric", ""), task.rubric or "") if r)  # shared + per task
         prompt = (
             f"## Task\n{task.prompt}\n\n## Reference answer\n{task.answer if task.answer is not None else '(none)'}"
             f"\n\n## Rubric\n{rubric or '(none)'}\n\n## Agent response\n{truncate(result.final_text, 15000)}"
@@ -172,10 +175,13 @@ class Scorer:
                         sheet: Path) -> Dict[str, Tuple[float, str]]:
         """Read verdicts; write the sheet (or add rows for tasks it lacks) and pause if any are open."""
         rows = read_review_rows(sheet) if sheet.is_file() else []
-        known = {strip_id(r.get("task_id", "")) for r in rows}
-        new_rows = [self._sheet_row(t, results[t.id]) for t in tasks if t.id not in known]
-        if new_rows:
-            write_review_sheet(sheet, rows + new_rows)
+        current = {t.id: self._sheet_row(t, results[t.id]) for t in tasks}
+        kept = [r for r in rows if strip_id(r.get("task_id", "")) not in current
+                or r.get("answer_key") == current[strip_id(r["task_id"])]["answer_key"]]
+        known = {strip_id(r.get("task_id", "")) for r in kept}
+        new_rows = [row for tid, row in current.items() if tid not in known]  # new or re-run tasks
+        if new_rows or len(kept) != len(rows):
+            write_review_sheet(sheet, kept + new_rows)
         verdicts = read_review_sheet(sheet)
         missing = [t.id for t in tasks if t.id not in verdicts]
         if missing:
@@ -190,8 +196,14 @@ class Scorer:
             "task_id": ID_PREFIX + task.id, "verdict": "", "comment": "", "prompt": task.prompt,
             "reference": "" if task.answer is None else str(task.answer),
             "agent_answer": result.prediction if result.ok else f"(failed) {result.error}",
-            "auto_score": hint, "output_dir": str(result.workdir),
+            "auto_score": hint, "output_dir": str(result.workdir), "answer_key": answer_key(result),
         }
+
+
+def answer_key(result: "RolloutResult") -> str:
+    """Short hash of the reviewed output: a verdict only counts for the answer it was given for."""
+    text = f"{result.ok}\0{result.final_text}\0{','.join(result.files)}"
+    return "h:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
 
 
 def _clamp(value: Any) -> float:
@@ -224,11 +236,17 @@ def parse_verdict(value: str) -> Optional[float]:
 
 def write_review_sheet(path: Path, rows: List[Dict[str, str]]) -> None:
     """UTF-8 with BOM so Excel on Windows shows Japanese correctly."""
+    write_sheet(path, REVIEW_COLUMNS, rows)
+
+
+def write_sheet(path: Path, columns: List[str], rows: List[Dict[str, str]]) -> None:
+    """Write a CSV for Excel: UTF-8 with BOM, and text cells that look like formulas are escaped."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=REVIEW_COLUMNS, extrasaction="ignore")
+        writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow({k: csv_cell(str(v)) if k in TEXT_COLUMNS and v else v for k, v in row.items()})
 
 
 def read_review_rows(path: Path) -> List[Dict[str, str]]:
@@ -242,7 +260,8 @@ def read_review_rows(path: Path) -> List[Dict[str, str]]:
             continue
     else:
         raise ValueError(f"{path}: save the sheet as CSV UTF-8 or CSV (Shift_JIS)")
-    rows = list(csv.DictReader(io.StringIO(text, newline="")))
+    rows = [{k: csv_value(v) if k in TEXT_COLUMNS and isinstance(v, str) else v for k, v in row.items()}
+            for row in csv.DictReader(io.StringIO(text, newline=""))]
     if rows and ("task_id" not in rows[0] or "verdict" not in rows[0]):
         raise ValueError(f"{path}: the columns task_id and verdict are required")
     return rows

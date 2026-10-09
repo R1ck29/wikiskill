@@ -22,13 +22,16 @@ import logging
 import os
 import shutil
 import signal
+import re
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+from .config import ConfigError
 from .util import read_json
 
 log = logging.getLogger(__name__)
@@ -54,6 +57,11 @@ DEFAULTS: Dict[str, Dict[str, object]] = {
                        "--sandbox", "workspace-write", "-c", "web_search=disabled"],
     },
 }
+
+
+_MODEL_RE = re.compile(r"[\w.:/@+-]+")  # Anthropic, OpenAI and Bedrock ids / ARNs
+_LIVE: set = set()  # running CLI processes, so Ctrl+C in the main thread can stop worker-thread runs
+_LIVE_LOCK = threading.Lock()
 
 
 class BackendError(RuntimeError):
@@ -86,19 +94,21 @@ def load_backend_config(kind: str, model: Optional[str] = None,
                         config_path: Optional[Path] = None) -> BackendConfig:
     """Built-in defaults for `kind`, overridden by the `kind` section of a JSON config file."""
     if kind not in DEFAULTS:
-        raise BackendError(f"unknown backend {kind!r}; choose from {sorted(DEFAULTS)}")
+        raise ConfigError(f"unknown backend {kind!r}; choose from {sorted(DEFAULTS)}")
     values = dict(DEFAULTS[kind])
     if config_path:
         overrides = read_json(Path(config_path)).get(kind, {})
         unknown = set(overrides) - set(BackendConfig.__dataclass_fields__)
         if unknown:
-            raise BackendError(f"unknown keys in backend config: {sorted(unknown)}")
+            raise ConfigError(f"unknown keys in backend config: {sorted(unknown)}")
         values.update(overrides)
     for key in ("complete_args", "agent_args"):
         values[key] = tuple(str(a) for a in values[key])
     values["kind"] = kind
     if model:
         values["model"] = model
+    if values.get("model") and not _MODEL_RE.fullmatch(values["model"]):
+        raise ConfigError(f"invalid model name {values['model']!r}")
     return BackendConfig(**values)
 
 
@@ -175,6 +185,8 @@ def run_process(argv: List[str], stdin: str, cwd: Path, timeout: float) -> Tuple
              else {"start_new_session": True})
     proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8", errors="replace", cwd=str(cwd), **extra)
+    with _LIVE_LOCK:
+        _LIVE.add(proc)
     try:
         stdout, stderr = proc.communicate(stdin, timeout=timeout)
         return proc.returncode, stdout, stderr
@@ -195,6 +207,17 @@ def run_process(argv: List[str], stdin: str, cwd: Path, timeout: float) -> Tuple
         except subprocess.TimeoutExpired:
             pass
         raise
+    finally:
+        with _LIVE_LOCK:
+            _LIVE.discard(proc)
+
+
+def kill_all_running() -> None:
+    """Stop every CLI started by run_process (used when the user presses Ctrl+C)."""
+    with _LIVE_LOCK:
+        procs = list(_LIVE)
+    for proc in procs:
+        _kill_tree(proc)
 
 
 def _kill_tree(proc: subprocess.Popen) -> None:

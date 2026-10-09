@@ -35,6 +35,12 @@ class ReadSandbox:
         self.traces_read: Set[str] = set()
 
     def read(self, path: str) -> str:
+        try:
+            return self._read(path)
+        except (OSError, ValueError) as e:  # e.g. NUL bytes or names the OS rejects
+            return f"ERROR: cannot read {str(path)[:200]!r} ({type(e).__name__})."
+
+    def _read(self, path: str) -> str:
         path = str(path).strip().replace("\\", "/").lstrip("/")
         if path.startswith("traces/"):
             task_id = path[len("traces/"):].rstrip("/")

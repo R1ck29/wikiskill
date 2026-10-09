@@ -9,6 +9,25 @@ from pathlib import Path
 from typing import Any
 
 _FENCED_JSON = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
+WINDOWS_RESERVED = {"con", "prn", "aux", "nul"} | {f"{p}{i}" for p in ("com", "lpt") for i in range(1, 10)}
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+_FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
+
+
+def is_windows_reserved(name: str) -> bool:
+    """True for names Windows cannot use as files (CON, nul.txt, com1.md, ...)."""
+    return name.split(".")[0].lower() in WINDOWS_RESERVED
+
+
+def csv_cell(value: str) -> str:
+    """Prefix ' so spreadsheet apps show text that starts like a formula instead of running it."""
+    return "'" + value if value.startswith(_FORMULA_START) else value
+
+
+def csv_value(cell: str) -> str:
+    """Undo csv_cell."""
+    return cell[1:] if cell.startswith("'") and cell[1:].startswith(_FORMULA_START) else cell
 
 
 def read_text(path: Path) -> str:
@@ -19,10 +38,12 @@ def write_text(path: Path, text: str) -> None:
     """Write UTF-8 text atomically (temp file + rename), creating parent dirs."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode & 0o777 if path.exists() else 0o666 & ~_UMASK  # mkstemp would leave 0600
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp-")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
+        os.chmod(tmp, mode)
         os.replace(tmp, str(path))
     except BaseException:
         if os.path.exists(tmp):

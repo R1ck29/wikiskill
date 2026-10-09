@@ -13,14 +13,14 @@ from pathlib import Path
 from typing import Any, Iterator, List, Optional
 
 from . import __version__
-from .backends import BackendError, make_backend
+from .backends import make_backend
 from .config import ConfigError, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import EvolveOptions, Evolution
 from .review import apply_sheet, collect
-from .rollout import RolloutInfraError
 from .scoring import HumanReviewPending, extract_answer
 from .skills import load_skills
+from .util import write_text
 from .workspace import Workspace
 
 log = logging.getLogger("wikiskill")
@@ -39,10 +39,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"\nHuman review needed: open {e.sheet}, fill in the 'verdict' column "
               f"(OK / NG / 0-1) for {len(e.missing)} row(s), save it, and run the same command again.")
         return EXIT_REVIEW
-    except (ConfigError, BackendError, ValueError, FileNotFoundError) as e:
+    except (ConfigError, ValueError, FileNotFoundError) as e:  # fix the input, then run again
         print(f"error: {e}", file=sys.stderr)
         return EXIT_CONFIG
-    except RolloutInfraError as e:
+    except (RuntimeError, OSError) as e:  # CLI/model failures, locks, disk errors: run again to resume
         print(f"error: {e}", file=sys.stderr)
         return EXIT_ERROR
 
@@ -92,7 +92,7 @@ def _add_run_commands(sub: Any) -> None:
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--splits", default="train,val,test", help="comma separated (default %(default)s)")
     _backend_args(p)
-    p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--workers", type=int, default=EvolveOptions().workers, help="parallel agent runs")
     p.set_defaults(func=cmd_review)
 
 
@@ -268,12 +268,12 @@ def cmd_export(args: argparse.Namespace) -> int:
     if not skills:
         print("no skills to export")
         return EXIT_CONFIG
+    dest = args.dest.expanduser()  # PowerShell does not expand ~ for external commands
     for name, text in skills:
-        target = args.dest / name / "SKILL.md"
+        target = dest / name / "SKILL.md"
         if target.exists() and not args.force:
             print(f"skip {name}: {target} exists (use --force to overwrite)")
             continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
+        write_text(target, text)
         print(f"exported {name} -> {target}")
     return 0

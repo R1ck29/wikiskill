@@ -26,7 +26,7 @@ from .proposer import run_proposer
 from .rollout import format_trace, run_tasks
 from .scoring import Outcome, Scorer
 from .skills import apply_proposal, load_skills
-from .util import append_text, read_json, read_text, write_json
+from .util import append_text, read_json, read_text, write_json, write_text
 from .workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -56,6 +56,10 @@ class Evolution:
     # ----- driver ------------------------------------------------------------------
     def run(self) -> Dict[str, Any]:
         self.ws.init()
+        with self.ws.lock():
+            return self._run()
+
+    def _run(self) -> Dict[str, Any]:
         state = self._load_state()
         if state["r_best"] is None:
             outcomes = self._score_split("val", load_skills(self.ws.skills), "baseline_val",
@@ -151,13 +155,12 @@ class Evolution:
                    "r_best_before": r_best, "accepted": False}
         if proposal.get("action") == "no_action":
             return pending
-        candidate = self._iter_dir(k) / "candidate_skills"
+        candidate, diff_path = self._iter_dir(k) / "candidate_skills", self._iter_dir(k) / "proposal.diff"
         if not candidate.is_dir():
             staging = self._iter_dir(k) / ".candidate_staging"
-            apply_proposal(self.ws.skills, proposal, staging)
+            write_text(diff_path, apply_proposal(self.ws.skills, proposal, staging)[1])
             staging.rename(candidate)
-        pending["diff"] = apply_proposal(self.ws.skills, proposal, self._iter_dir(k) / ".diff_check")[1]
-        shutil.rmtree(self._iter_dir(k) / ".diff_check")
+        pending["diff"] = read_text(diff_path)
         outcomes = self._score_split("val", load_skills(candidate), f"iter_{k:03d}_val",
                                      self._iter_dir(k) / "val")
         pending["score"] = mean(outcomes)
@@ -168,8 +171,8 @@ class Evolution:
         """Gate: accept or roll back skills; the wiki is kept either way."""
         k, pending = state["iteration"], state["pending"]
         marker = self._iter_dir(k) / "skills_swapped"
-        if pending["accepted"] and not marker.exists():
-            shutil.rmtree(self.ws.skills)
+        if pending["accepted"] and not marker.exists():  # safe to redo if interrupted half-way
+            shutil.rmtree(self.ws.skills, ignore_errors=True)
             shutil.copytree(self._iter_dir(k) / "candidate_skills", self.ws.skills)
             _note_purpose(self.ws.skills / pending["target"], k, pending)
             marker.write_text("done\n", encoding="utf-8")

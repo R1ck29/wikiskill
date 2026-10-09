@@ -11,13 +11,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
-from .util import read_json, read_text
+from .util import is_windows_reserved, read_json, read_text
 
 SPLITS = ("train", "val", "test")
 SCORER_TYPES = ("exact", "contains", "regex", "number", "script", "llm_judge")
 ANSWER_REQUIRED = ("exact", "contains", "regex", "number")
 _ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
-_WINDOWS_RESERVED = {"con", "prn", "aux", "nul"} | {f"{p}{i}" for p in ("com", "lpt") for i in range(1, 10)}
 
 
 class ConfigError(ValueError):
@@ -117,7 +116,7 @@ def _parse_task(row: Any, where: str, files_dir: Path, scorer_type: Optional[str
     if not isinstance(row, dict):
         raise ConfigError(f"{where}: each line must be a JSON object")
     task_id = str(row.get("id", ""))
-    if not _ID_RE.fullmatch(task_id) or task_id.split(".")[0].lower() in _WINDOWS_RESERVED:
+    if not _ID_RE.fullmatch(task_id) or is_windows_reserved(task_id):
         raise ConfigError(
             f"{where}: 'id' must match {_ID_RE.pattern} and not be a Windows device name "
             "(it is used as a file name)"
@@ -131,7 +130,8 @@ def _parse_task(row: Any, where: str, files_dir: Path, scorer_type: Optional[str
         raise ConfigError(f"{where}: 'files' must be a list of paths")
     for rel in files:
         target = (files_dir / rel).resolve()
-        if files_dir not in target.parents or not target.exists():
+        parts = Path(rel.replace("\\", "/")).parts
+        if ".." in parts or Path(rel).is_absolute() or files_dir not in target.parents or not target.exists():
             raise ConfigError(f"{where}: file {rel!r} must exist inside {files_dir}")
     if scorer_type in ANSWER_REQUIRED and row.get("answer") is None:
         raise ConfigError(f"{where}: scorer {scorer_type!r} needs an 'answer'")

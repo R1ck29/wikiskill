@@ -103,7 +103,8 @@ class ProposerTest(unittest.TestCase):
         self.assertIn("Index", box.read("wiki/index.md"))
         self.assertIn("patterns", box.read("wiki"))
         for bad in ("runs/baseline_val/secret.md", "wiki/../runs/baseline_val/secret.md",
-                    "traces/../../../runs/baseline_val/secret.md", "/etc/passwd", "raw/iter_001/summary.json"):
+                    "traces/../../../runs/baseline_val/secret.md", "/etc/passwd", "raw/iter_001/summary.json",
+                    "wiki/\x00index.md"):
             self.assertTrue(box.read(bad).startswith("ERROR"), bad)
         box.read("traces/T1")  # same file on case-insensitive systems: still one trace
         self.assertEqual(box.traces_read, {"t1", "t2"})

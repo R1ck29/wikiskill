@@ -11,11 +11,12 @@ import hashlib
 import logging
 import shutil
 import tempfile
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+from .backends import kill_all_running
 from .config import Suite, Task
 from .scoring import Outcome, extract_answer
 from .skills import render_skill_section
@@ -52,14 +53,27 @@ def user_prompt(task: Task) -> str:
     return f"{task.prompt}\n\nInput files in your working directory:\n{listing}"
 
 
+def cache_key(backend: Any, suite: Suite, task: Task, system: str) -> str:
+    """Identifies a run: backend + model, system prompt (skills), task text and input file contents."""
+    digest = hashlib.sha256()
+    for part in (getattr(backend, "name", "?"), system, user_prompt(task)):
+        digest.update(part.encode("utf-8") + b"\0")
+    for rel in task.files:
+        src = suite.files_dir / rel
+        for path in sorted(src.rglob("*")) if src.is_dir() else [src]:
+            if path.is_file():
+                digest.update(path.relative_to(suite.files_dir).as_posix().encode("utf-8") + path.read_bytes())
+    return digest.hexdigest()
+
+
 def run_task(backend: Any, suite: Suite, task: Task, system: str, out_dir: Path) -> RolloutResult:
     """Run one task (or load its cached result)."""
     cached = out_dir / "result.json"
-    key = hashlib.sha256(f"{system}\0{user_prompt(task)}".encode("utf-8")).hexdigest()
+    key = cache_key(backend, suite, task, system)
     if cached.is_file():
         data = read_json(cached)
-        if data.pop("cache_key", None) == key:  # same prompt and skills: reuse the earlier run
-            data["files"] = tuple(data["files"])
+        if data.pop("cache_key", None) == key:  # same model, prompt, skills and inputs: reuse the run
+            data.update(files=tuple(data["files"]), workdir=str(out_dir / "work"))
             return RolloutResult(**data, trace=read_text(out_dir / "trace.md"))
         cached.unlink()  # different skills or task text: run again
     tmp = Path(tempfile.mkdtemp(prefix="wikiskill-task-"))
@@ -101,8 +115,22 @@ def run_tasks(backend: Any, suite: Suite, tasks: List[Task], skills: List[Tuple[
                  "" if result.ok else f" (failed: {result.error[:120]})")
         return result
 
-    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
-        results = list(pool.map(one, tasks))
+    pool = ThreadPoolExecutor(max_workers=max(1, workers))
+    futures = [pool.submit(one, task) for task in tasks]
+    try:
+        pending = set(futures)
+        while pending:  # short waits keep Ctrl+C responsive (also on Windows)
+            done_now, pending = wait(pending, timeout=1.0, return_when=FIRST_EXCEPTION)
+            for future in done_now:
+                future.result()  # re-raise a worker's exception right away
+    except BaseException:
+        for future in futures:
+            future.cancel()
+        kill_all_running()
+        pool.shutdown(wait=False)
+        raise
+    pool.shutdown(wait=True)
+    results = [f.result() for f in futures]
     failed = [r.task_id for r in results if r.infra_error]
     if failed:  # never score an outage: it would mislead the wiki and the validation gate
         raise RolloutInfraError(

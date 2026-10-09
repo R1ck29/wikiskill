@@ -72,6 +72,29 @@ class RolloutTest(unittest.TestCase):
         self.assertFalse(results["t1"].ok)
         self.assertTrue((self.root / "stage" / "t1" / "result.json").exists())
 
+    def test_cache_depends_on_model_and_input_files(self):
+        out = self.root / "o"
+        agent = ScriptedAgent(ok_agent)
+        agent.name = "claude:haiku"
+        run_task(agent, self.suite, self.task, "SYS", out)
+        agent.name = "claude:sonnet"  # different model: run again
+        run_task(agent, self.suite, self.task, "SYS", out)
+        (self.suite.files_dir / "sales.csv").write_text("a,b\n9,9\n", encoding="utf-8")  # input changed
+        run_task(agent, self.suite, self.task, "SYS", out)
+        run_task(agent, self.suite, self.task, "SYS", out)  # unchanged: cached
+        self.assertEqual(len(agent.calls), 3)
+
+    def test_interrupt_stops_running_clis(self):
+        from unittest import mock
+
+        def interrupted(cwd):
+            raise KeyboardInterrupt
+
+        with mock.patch("wikiskill.rollout.kill_all_running") as kill_all:
+            with self.assertRaises(KeyboardInterrupt):
+                run_tasks(ScriptedAgent(interrupted), self.suite, [self.task], [], self.root / "stage", workers=2)
+        kill_all.assert_called_once()
+
     @unittest.skipIf(os.name == "nt", "creating symlinks needs extra rights on Windows")
     def test_dangling_symlink_does_not_abort(self):
         def agent_with_link(cwd: Path) -> AgentResult:

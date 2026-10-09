@@ -63,7 +63,7 @@ class PatchingTest(unittest.TestCase):
 class SkillsTest(unittest.TestCase):
     def test_validate(self):
         validate_skill_md("csv-cleaning", SKILL)
-        for bad_name in ("CSV", "csv_cleaning", "-a", "a--b", "a" * 65):
+        for bad_name in ("CSV", "csv_cleaning", "-a", "a--b", "a" * 65, "con", "aux"):
             with self.assertRaises(SkillError):
                 validate_skill_md(bad_name, SKILL.replace("csv-cleaning", bad_name))
         with self.assertRaises(SkillError):
@@ -157,6 +157,7 @@ class ConfigTest(unittest.TestCase):
             [{"id": "abc\n", "split": "train", "prompt": "q", "answer": "1"}],
             [{"id": "CON", "split": "train", "prompt": "q", "answer": "1"}],
             [{"id": "nul.txt", "split": "train", "prompt": "q", "answer": "1"}],
+            [{"id": "t", "split": "train", "prompt": "q", "answer": "1", "files": ["../files/a.csv"]}],
         ]
         for tasks in bad_tasks:
             with tempfile.TemporaryDirectory() as tmp:
@@ -210,6 +211,11 @@ class WorkspaceTest(unittest.TestCase):
                 ws.write_raw(1, {"t1": "other"}, {})
             with self.assertRaises(ValueError):
                 ws.write_raw(2, {"A": "upper", "a": "lower"}, {})
+            with ws.lock():
+                with self.assertRaises(RuntimeError):  # a second run on the same workspace is refused
+                    with ws.lock():
+                        pass
+            self.assertFalse((ws.root / "evolve.lock").exists())
             ws.save_state({"iteration": 1})
             self.assertEqual(ws.load_state(), {"iteration": 1})
 

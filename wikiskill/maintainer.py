@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Tuple
 
 from .patching import PatchError, apply_edits
 from .scoring import Outcome
-from .util import append_text, extract_json_object, read_text, truncate, write_text
+from .util import append_text, extract_json_object, is_windows_reserved, read_text, truncate, write_text
 from .workspace import Workspace
 
 log = logging.getLogger(__name__)
@@ -21,6 +21,10 @@ log = logging.getLogger(__name__)
 PROMPT = (Path(__file__).parent / "prompts" / "wiki_maintainer.md").read_text(encoding="utf-8")
 PATTERN_NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\.md")
 MAX_FAIL, MAX_PASS, TRACE_CHARS = 5, 3, 15000  # Appendix C
+
+
+class MaintainerError(RuntimeError):
+    """The model never returned usable wiki edits."""
 
 
 def sample_traces(outcomes: Dict[str, Outcome], seed: int) -> List[str]:
@@ -67,7 +71,7 @@ def run_maintainer(backend: Any, ws: Workspace, iteration: int, traces: Dict[str
             log.warning("wiki maintainer reply unusable: %s", e)
             continue
         return apply_output(ws, iteration, data)
-    raise RuntimeError(f"wiki maintainer gave no usable JSON after {attempts} attempts")
+    raise MaintainerError(f"wiki maintainer gave no usable JSON after {attempts} attempts; run again to retry")
 
 
 def _check_required(data: Dict[str, Any]) -> None:
@@ -115,7 +119,7 @@ def _pattern_name(entry: Any, warnings: List[str]) -> Any:
     name = entry.get("name") if isinstance(entry, dict) else None
     if isinstance(name, str) and name.startswith("wiki/patterns/"):
         name = name[len("wiki/patterns/"):]
-    if not isinstance(name, str) or not PATTERN_NAME_RE.fullmatch(name):
+    if not isinstance(name, str) or not PATTERN_NAME_RE.fullmatch(name) or is_windows_reserved(name):
         warnings.append(f"invalid pattern name {name!r}; skipped")
         return None
     return name

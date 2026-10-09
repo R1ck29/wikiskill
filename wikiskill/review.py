@@ -8,7 +8,6 @@
 """
 from __future__ import annotations
 
-import csv
 import json
 import shutil
 from pathlib import Path
@@ -16,7 +15,7 @@ from typing import Any, Dict, List
 
 from .config import Suite
 from .rollout import run_tasks
-from .scoring import ID_PREFIX, parse_verdict, read_review_rows, strip_id
+from .scoring import ID_PREFIX, parse_verdict, read_review_rows, strip_id, write_sheet
 from .util import read_text, write_text
 
 COLUMNS = ["task_id", "verdict", "corrected_answer", "rubric_note", "prompt", "agent_answer", "output_dir"]
@@ -28,16 +27,11 @@ def collect(suite: Suite, backend: Any, splits: List[str], out_dir: Path, worker
         raise ValueError(f"no tasks in splits {splits}")
     results = run_tasks(backend, suite, tasks, [], out_dir / "runs", workers)
     sheet = out_dir / "review_sheet.csv"
-    sheet.parent.mkdir(parents=True, exist_ok=True)
-    with open(sheet, "w", encoding="utf-8-sig", newline="") as f:  # BOM: Excel shows Japanese correctly
-        writer = csv.DictWriter(f, fieldnames=COLUMNS)
-        writer.writeheader()
-        for task in tasks:
-            r = results[task.id]
-            writer.writerow({"task_id": ID_PREFIX + task.id, "verdict": "", "corrected_answer": "",
-                             "rubric_note": "", "prompt": task.prompt,
-                             "agent_answer": r.prediction if r.ok else f"(failed) {r.error}",
-                             "output_dir": r.workdir})
+    write_sheet(sheet, COLUMNS, [
+        {"task_id": ID_PREFIX + t.id, "verdict": "", "corrected_answer": "", "rubric_note": "",
+         "prompt": t.prompt, "output_dir": results[t.id].workdir,
+         "agent_answer": results[t.id].prediction if results[t.id].ok else f"(failed) {results[t.id].error}"}
+        for t in tasks])
     return sheet
 
 

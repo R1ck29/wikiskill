@@ -6,7 +6,7 @@ from pathlib import Path
 from wikiskill.config import Suite, Task
 from wikiskill.rollout import RolloutResult
 from wikiskill.scoring import (HumanReviewPending, Scorer, extract_answer, parse_number, parse_verdict,
-                               read_review_sheet, write_review_sheet)
+                               read_review_rows, read_review_sheet, write_review_sheet)
 
 
 def make_suite(root: Path, scorer: dict, human: bool = False) -> Suite:
@@ -93,9 +93,10 @@ class AutoScorerTest(unittest.TestCase):
     def test_llm_judge(self):
         task = Task("t", "train", "訳して", answer="apple", rubric="一語で")
         judge = FakeJudge('```json\n{"score": 1.7, "reason": "fine"}\n```')
-        scorer = Scorer(make_suite(Path("."), {"type": "llm_judge"}), judge)
+        scorer = Scorer(make_suite(Path("."), {"type": "llm_judge", "rubric": "用語集: 見積書=quotation"}), judge)
         self.assertEqual(scorer.auto(task, result("Apple")), (1.0, "fine"))  # clamped to [0, 1]
-        self.assertIn("一語で", judge.prompts[0])
+        self.assertIn("一語で", judge.prompts[0])  # per-task rubric ...
+        self.assertIn("見積書=quotation", judge.prompts[0])  # ... is added to the shared one
         bad = Scorer(make_suite(Path("."), {"type": "llm_judge"}), FakeJudge("no json"))
         self.assertEqual(bad.auto(task, result("Apple"))[0], 0.0)
 
@@ -127,17 +128,39 @@ class HumanReviewTest(unittest.TestCase):
             self.assertTrue(rows[1].startswith("id:a,"))  # prefix stops Excel converting ids
             self.assertIn("質問A", rows[1])
             self.assertIn(",1,", rows[1])  # auto_score hint for a task with an answer
-            write_review_sheet(sheet, [{"task_id": "id:a", "verdict": "OK", "comment": ""}])
+            row_a, row_b = read_review_rows(sheet)
+            write_review_sheet(sheet, [dict(row_a, verdict="OK")])  # reviewer deleted row b by mistake
             with self.assertRaises(HumanReviewPending) as pending:
                 scorer.score_all(tasks, results, sheet)
             self.assertEqual(pending.exception.missing, ["b"])
             self.assertIn("id:b", sheet.read_text(encoding="utf-8-sig"))  # deleted row is re-added
-            write_review_sheet(sheet, [{"task_id": "a", "verdict": "OK"},
-                                       {"task_id": "b", "verdict": "要修正", "comment": "単位が\n抜けている"}])
+            write_review_sheet(sheet, [dict(row_a, verdict="OK"),
+                                       dict(row_b, verdict="要修正", comment="単位が\n抜けている")])
             outcomes = scorer.score_all(tasks, results, sheet)
             self.assertTrue(outcomes["a"].passed)
             self.assertFalse(outcomes["b"].passed)
             self.assertIn("単位が\n抜けている", outcomes["b"].note)  # multi-line cell kept
+
+    def test_verdict_for_an_old_answer_is_not_reused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            scorer = Scorer(make_suite(root, {"type": "exact"}, human=True))
+            tasks, sheet = [Task("a", "val", "q")], root / "r.csv"
+            with self.assertRaises(HumanReviewPending):
+                scorer.score_all(tasks, {"a": replace(result("old"), task_id="a")}, sheet)
+            write_review_sheet(sheet, [dict(read_review_rows(sheet)[0], verdict="OK")])
+            self.assertTrue(scorer.score_all(tasks, {"a": replace(result("old"), task_id="a")}, sheet)["a"].passed)
+            with self.assertRaises(HumanReviewPending):  # a new answer needs a new verdict
+                scorer.score_all(tasks, {"a": replace(result("new"), task_id="a")}, sheet)
+
+    def test_formula_like_cells_are_escaped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sheet = Path(tmp) / "r.csv"
+            write_review_sheet(sheet, [{"task_id": "id:a", "verdict": "OK", "agent_answer": "=HYPERLINK(1)",
+                                        "comment": "-16000"}])
+            self.assertIn("'=HYPERLINK", sheet.read_text(encoding="utf-8-sig"))
+            row = read_review_rows(sheet)[0]
+            self.assertEqual((row["agent_answer"], row["comment"]), ("=HYPERLINK(1)", "-16000"))
 
     def test_reads_excel_shift_jis_csv(self):
         with tempfile.TemporaryDirectory() as tmp:

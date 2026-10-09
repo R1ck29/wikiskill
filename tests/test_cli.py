@@ -42,6 +42,9 @@ class CLITest(unittest.TestCase):
         self.assertFalse((dest / "report-total" / "PURPOSE.md").exists())
         code, out = run_cli("export", self.ws.root, "--dest", dest)
         self.assertIn("skip report-total", out)
+        with mock.patch.dict("os.environ", {"HOME": str(self.root), "USERPROFILE": str(self.root)}):
+            run_cli("export", self.ws.root, "--dest", "~/.agents/skills")
+        self.assertTrue((self.root / ".agents" / "skills" / "report-total" / "SKILL.md").is_file())
 
     def test_compare(self):
         for name, scores in (("a", {"x1": 0, "x2": 0}), ("b", {"x1": 1, "x2": 1})):

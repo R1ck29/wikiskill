@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from wikiskill.backends import BackendError, load_backend_config, make_backend
+from wikiskill.config import ConfigError
 
 FAKE_CLI = Path(__file__).with_name("fake_cli.py")
 JAPANESE = "売上の合計を計算してください。「税込」も考慮。"
@@ -160,10 +161,12 @@ class FailureTest(FakeCLITestCase):
     def test_unknown_config_keys_rejected(self):
         config_path = Path(self.tmp.name) / "backend.json"
         config_path.write_text(json.dumps({"claude": {"timeoutt": 5}}), encoding="utf-8")
-        with self.assertRaises(BackendError):
+        with self.assertRaises(ConfigError):
             load_backend_config("claude", config_path=config_path)
-        with self.assertRaises(BackendError):
+        with self.assertRaises(ConfigError):
             load_backend_config("gemini")
+        with self.assertRaises(ConfigError):
+            load_backend_config("claude", model="sonnet & del *")
 
 
 if __name__ == "__main__":

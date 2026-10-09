@@ -9,9 +9,11 @@
 """
 from __future__ import annotations
 
+import contextlib
+import os
 import shutil
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from .util import read_json, write_json, write_text
 
@@ -41,6 +43,22 @@ class Workspace:
         for name, text in WIKI_SEED.items():
             if not (self.wiki / name).exists():
                 write_text(self.wiki / name, text)
+
+    @contextlib.contextmanager
+    def lock(self) -> Iterator[None]:
+        """Refuse a second `evolve` on the same workspace while one is running."""
+        path = self.root / "evolve.lock"
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            raise RuntimeError(f"{path} exists: another evolve is running on this workspace. "
+                               "If none is (e.g. the computer crashed), delete the file and retry.") from None
+        try:
+            os.write(fd, str(os.getpid()).encode("ascii"))
+            os.close(fd)
+            yield
+        finally:
+            path.unlink()
 
     # ----- state -------------------------------------------------------------
     def load_state(self) -> Optional[Dict[str, Any]]:

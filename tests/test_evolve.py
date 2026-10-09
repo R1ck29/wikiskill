@@ -125,6 +125,27 @@ class EvolveLoopTest(unittest.TestCase):
         evaluate(suite, backend, ws.skills, "test", out, 1)
         self.assertEqual(backend.agent_calls, 0)  # identical prompt and skills: cache reused
 
+    def test_interrupted_skills_swap_resumes(self):
+        suite = load_suite(write_suite(self.root / "suite"))
+        ws = Workspace(self.root / "ws")
+        evo = Evolution(suite, FakeBackend(), ws, self.opts)
+        real_copytree = __import__("shutil").copytree
+        calls = {"n": 0}
+
+        def crash_on_swap(src, dst, *a, **kw):
+            if Path(dst) == ws.skills and calls["n"] == 0:
+                calls["n"] += 1
+                raise KeyboardInterrupt  # power cut after skills/ was deleted
+            return real_copytree(src, dst, *a, **kw)
+
+        from unittest import mock
+        with mock.patch("wikiskill.evolve.shutil.copytree", crash_on_swap):
+            with self.assertRaises(KeyboardInterrupt):
+                evo.run()
+        state = Evolution(suite, FakeBackend(), ws, self.opts).run()
+        self.assertEqual([h["outcome"] for h in state["history"]], ["rejected", "accepted"])
+        self.assertTrue((ws.skills / "report-total" / "SKILL.md").is_file())
+
     def test_changed_task_ids_are_refused(self):
         suite_dir = write_suite(self.root / "suite")
         ws = Workspace(self.root / "ws")

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 from .patching import PatchError, apply_edits, unified_diff
-from .util import read_text, write_text
+from .util import is_windows_reserved, read_text, write_text
 
 NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 MAX_NAME, MAX_DESCRIPTION = 64, 1024
@@ -50,7 +50,8 @@ def _unquote(value: str) -> str:
 
 
 def validate_name(name: object) -> None:
-    if not isinstance(name, str) or len(name) > MAX_NAME or not NAME_RE.fullmatch(name):
+    if (not isinstance(name, str) or len(name) > MAX_NAME or not NAME_RE.fullmatch(name)
+            or is_windows_reserved(name)):
         raise SkillError(
             f"invalid skill name {name!r}: use 1-{MAX_NAME} lowercase letters, digits and single hyphens"
         )
