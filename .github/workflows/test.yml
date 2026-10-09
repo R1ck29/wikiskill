@@ -19,11 +19,12 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Unit tests (standard library only, no network)
         run: python -m unittest discover -s tests -t . -v
-      - name: CLI smoke test
+      - name: CLI smoke test (no model; python stands in for the CLI)
         run: |
           python -m wikiskill --version
-          python -m wikiskill check --suite examples/sales-analysis --no-call --backend codex
-        continue-on-error: false
+          echo '{"claude": {"command": "python"}}' > ci-backend.json
+          python -m wikiskill check --suite examples/sales-analysis --no-call --backend-config ci-backend.json
+          python -m wikiskill check --suite examples/translation-ja-en --no-call --backend-config ci-backend.json
         shell: bash
       - name: Example answers re-verified with SQLite
         run: python examples/sales-analysis/make_tasks.py --verify

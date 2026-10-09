@@ -114,7 +114,7 @@ class FailureTest(FakeCLITestCase):
         self.assertEqual(len(self.calls()), 6)  # 3 attempts each
 
     def test_empty_codex_message_is_a_normal_result(self):
-        with mock.patch.dict(os.environ, {"FAKE_CLI_REPLY": ""}):
+        with mock.patch.dict(os.environ, {"FAKE_CLI_REPLY": "__EMPTY__"}):  # Windows drops empty env vars
             result = make_backend("codex").run_agent("x", None, self.workdir)
         self.assertTrue(result.ok)
         self.assertEqual(result.final_text, "")
@@ -144,8 +144,12 @@ class FailureTest(FakeCLITestCase):
         killed = []
         real_kill = backends._kill_tree
 
+        real_communicate = backends.subprocess.Popen.communicate
+
         def interrupting_communicate(self, *a, **kw):
-            raise KeyboardInterrupt
+            if self.args[0] == sys.executable:  # only the CLI under test, not taskkill on Windows
+                raise KeyboardInterrupt
+            return real_communicate(self, *a, **kw)
 
         with mock.patch.object(backends.subprocess.Popen, "communicate", interrupting_communicate), \
                 mock.patch.object(backends, "_kill_tree", lambda proc: (killed.append(proc.pid), real_kill(proc))):

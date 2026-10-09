@@ -15,6 +15,8 @@ def main() -> None:
     args = sys.argv[1:]
     stdin = io.TextIOWrapper(sys.stdin.buffer, encoding="utf-8").read()
     reply = os.environ.get("FAKE_CLI_REPLY", "<answer>42</answer>")
+    if reply == "__EMPTY__":
+        reply = ""
     with open(os.environ["FAKE_CLI_RECORD"], "a", encoding="utf-8") as f:
         f.write(json.dumps({"args": args, "stdin": stdin, "cwd": os.getcwd()}, ensure_ascii=False) + "\n")
     out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")

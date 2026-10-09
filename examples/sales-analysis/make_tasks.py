@@ -6,8 +6,9 @@
 The data has the quirks real exports have: amounts with commas, yen signs and full-width
 digits, three date formats, returned and cancelled orders, and double-posted rows.
 Answers also follow an unwritten in-house convention that the agent is never told and has
-to learn from feedback: money is reported tax-excluded (tax-included / 1.1, fractions of
-a yen truncated). Returns are subtracted, cancellations ignored, duplicate rows counted once.
+to learn from feedback: money is reported tax-excluded, computed on the aggregate
+(total or average of tax-included amounts, then / 1.1, fractions of a yen truncated).
+Returns are subtracted, cancellations ignored, duplicate rows counted once.
 """
 import argparse
 import json
