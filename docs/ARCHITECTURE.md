@@ -64,6 +64,16 @@ wikiskill/
   prompts/        Wiki メンテナとスキル提案者のシステムプロンプト（論文付録 E.2 / E.3）
 ```
 
+プラグインとしての配布物（README の「Claude のプラグインとして使う」）:
+
+```
+.claude-plugin/plugin.json, marketplace.json   リポジトリ全体を 1 つのプラグイン兼マーケットプレイスにする
+skills/wikiskill/SKILL.md                      Claude が CLI を代わりに実行するための手順書（呼び出し時だけ読み込まれる）
+skills/wikiskill/scripts/run_wikiskill.py      起動スクリプト。スキルフォルダ内 → 親フォルダの順に wikiskill パッケージを探し、
+                                               Python が 3.9 未満なら PATH 上の新しい python3.X で実行し直す
+tools/integrate.py                             既存プラグインへ、パッケージ・docs・examples を同梱した自己完結のスキルフォルダをコピー
+```
+
 依存の向きは `cli → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → config/patching/workspace/util` の一方向です。
 
 拡張するときに触る場所:

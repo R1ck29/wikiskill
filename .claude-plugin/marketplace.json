@@ -1,0 +1,14 @@
+{
+  "name": "wikiskill",
+  "owner": {
+    "name": "Riku Suzuki"
+  },
+  "description": "WikiSkill plugin",
+  "plugins": [
+    {
+      "name": "wikiskill",
+      "source": "./",
+      "description": "業務の例からエージェント用スキルを自動で育てる WikiSkill を、会話だけで実行するスキル"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "name": "wikiskill",
+  "displayName": "WikiSkill",
+  "version": "0.1.0",
+  "description": "業務の例からエージェント用スキルを自動で育てる WikiSkill (arXiv:2608.27454) を、会話だけで実行するスキル",
+  "author": {
+    "name": "Riku Suzuki"
+  },
+  "homepage": "https://github.com/R1ck29/wikiskill",
+  "repository": "https://github.com/R1ck29/wikiskill",
+  "keywords": ["skills", "skill-evolution", "wiki", "agents"]
+}

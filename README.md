@@ -27,6 +27,43 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 タスクは 3 つに分けて使います。**train**（学習用。①で解く）、**val**（検証用。④の採否判定）、
 **test**（最終評価用。育成中は一切使わない）。詳しい構造と論文との対応は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) にあります。
 
+## Claude のプラグインとして使う（ターミナル操作なし）
+
+プラグインを入れると、Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、
+Claude が以下のコマンドを代わりに実行します。利用者の作業は**例のフォルダを伝えることと、頼まれたときに Excel で OK/NG を付けること**だけです。
+プラグインが常に消費するのは 1 セッションあたり約 40 トークンで、呼び出したときに約 700 トークン（手順書の読み込み）が加わります。
+Python 3.9 以上と `claude`（または `codex`）コマンドは、下の「準備」と同じく必要です。
+
+入れ方は 3 通りあります。
+
+**A. Claude のコマンドで入れる（GitHub に接続できる環境）**: Claude Code のチャット欄に次を入力します。
+
+```
+/plugin install wikiskill --marketplace R1ck29/wikiskill
+```
+
+ターミナルからなら `claude plugin install wikiskill --marketplace R1ck29/wikiskill` です
+（Claude Code 2.1.275 より前は `/plugin marketplace add R1ck29/wikiskill` のあと `/plugin install wikiskill@wikiskill`）。
+入れたあとは `/wikiskill:wikiskill` で呼び出せます。話しかけるだけでも、通常は Claude が自動で呼び出します。
+
+**B. ZIP から単体で入れる**: 「Code → Download ZIP」で取得して展開し、`/plugin install wikiskill --marketplace <展開したフォルダ>`
+（`README.md` がある方のフォルダ）を実行します。フォルダは消さずに置いておきます。
+
+**C. 社内の既存プラグイン（ハーネス）に組み込む**: マーケットプレイスに公開できない場合の方法です。プラグインの管理者が
+ZIP を展開したフォルダで次を 1 回実行し、あとはそのプラグインをいつもどおり配布します。
+
+```bash
+python tools/integrate.py <既存プラグインのフォルダ>
+```
+
+（`python` は macOS では `python3`、Windows では `py`）`<既存プラグイン>/skills/wikiskill/` に、動作に必要なもの（手順書・本体・ドキュメント・サンプル）がすべて入った 1 フォルダが作られます。
+ZIP のフォルダは後で消して構いません。利用者は `/<既存プラグイン名>:wikiskill` か、話しかけるだけで使えます。
+新しい版に更新するときは `--force` を付けて再実行します（WikiSkill 以外のフォルダは上書きしません）。
+Python を実行できない場合は、`skills/wikiskill` フォルダを `<既存プラグイン>/skills/` にコピーし、
+その中に `wikiskill`・`docs`・`examples` の 3 フォルダをコピーしても同じです。
+
+育ったスキルを社内に配るときも同じプラグインが使えます。`export` の書き出し先を `<既存プラグイン>/skills` にして配布してください。
+
 ## 準備
 
 1. **Python 3.9 以上**: ターミナルで `python3 --version`（Windows は `py --version`）を実行してバージョンを確認します。
