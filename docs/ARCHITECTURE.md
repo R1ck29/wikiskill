@@ -54,6 +54,7 @@ wikiskill/
   proposer.py     スキル提案者（ReAct ループ、読み取り専用サンドボックス、提案の検証）
   scoring.py      採点（exact/contains/regex/number/script/llm_judge）とレビューシート
   review.py       ハイブリッド方式（1 回だけ人が確認 → 正解データ化）
+  improve.py      実際の利用からの改善（feedback の記録、gen-NNN 世代の準備と引き継ぎ、フッター付きの書き出し）
   evaluate.py     任意のスキルでの評価と、対応ありブートストラップ検定
   skills.py       SKILL.md の検証（Agent Skills 仕様）、プロンプトへの埋め込み、提案の適用
   patching.py     append / replace / insert_after の部分編集と差分（wiki とスキルで共用）

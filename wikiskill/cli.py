@@ -17,6 +17,7 @@ from .backends import make_backend
 from .config import ConfigError, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import EvolveOptions, Evolution
+from .improve import export_skills, pending, prepare_generation, record_feedback
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
 from .skills import load_skills
@@ -24,6 +25,9 @@ from .util import write_text
 from .workspace import Workspace
 
 log = logging.getLogger("wikiskill")
+# bundled examples sit next to the package (repository root, or the skill folder made by tools/integrate.py)
+EXAMPLES = {p.name: p for p in (Path(__file__).resolve().parent.parent / "examples").glob("*")
+            if (p / "suite.json").is_file()}
 EXIT_ERROR, EXIT_CONFIG, EXIT_REVIEW = 1, 2, 3
 
 
@@ -57,7 +61,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_run_commands(sub: Any) -> None:
-    """Commands that run agents: check, evolve, evaluate, review."""
+    """Commands that run agents: check, evolve, improve, evaluate, review."""
     p = sub.add_parser("check", help="check Python, the CLI backend and (optionally) a suite")
     _backend_args(p)
     p.add_argument("--suite", type=Path, help="also validate this suite")
@@ -74,6 +78,17 @@ def _add_run_commands(sub: Any) -> None:
     p.add_argument("--seed", type=int, default=defaults.seed)
     p.add_argument("--max-turns", type=int, default=defaults.max_turns, help="Skill Proposer turn limit")
     p.set_defaults(func=cmd_evolve)
+
+    p = sub.add_parser("improve", help="keep improving: resume, or start a new generation from pending feedback")
+    p.add_argument("suite", type=_path)
+    p.add_argument("--workspace", type=_path, required=True, help="folder holding the generations gen-NNN")
+    _backend_args(p)
+    _run_args(p)
+    p.add_argument("--iterations", type=int, default=3, help="iterations per generation (default %(default)s)")
+    p.add_argument("--min-new", type=int, default=3,
+                   help="pending feedback rows needed to start a new generation (default %(default)s)")
+    p.add_argument("--export", type=_path, help="also copy the skills here, e.g. ~/.claude/skills")
+    p.set_defaults(func=cmd_improve)
 
     p = sub.add_parser("evaluate", help="score a split with evolved skills (or none)")
     p.add_argument("suite", type=Path)
@@ -97,7 +112,7 @@ def _add_run_commands(sub: Any) -> None:
 
 
 def _add_helper_commands(sub: Any) -> None:
-    """Commands that only read or write files: compare, review-apply, status, export."""
+    """Commands that only read or write files: compare, review-apply, feedback, status, export."""
     p = sub.add_parser("compare", help="paired bootstrap test between two report.json files (B minus A)")
     p.add_argument("report_a", type=Path)
     p.add_argument("report_b", type=Path)
@@ -109,6 +124,22 @@ def _add_helper_commands(sub: Any) -> None:
     p.add_argument("sheet", type=Path)
     p.set_defaults(func=cmd_review_apply)
 
+    p = sub.add_parser("init", help="start a suite from a bundled example and copy input files into it")
+    p.add_argument("suite", type=_path, help="new suite folder")
+    p.add_argument("--like", choices=sorted(EXAMPLES), required=True, help="example to start from")
+    p.add_argument("--inputs", type=_path, help="folder whose files become the suite's input files")
+    p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("feedback", help="queue a judged real-world result for the next `improve`")
+    p.add_argument("suite", type=_path)
+    p.add_argument("--verdict", choices=["good", "bad"], required=True)
+    p.add_argument("--prompt", required=True, help="the request the user made")
+    p.add_argument("--output", help="the result that was produced (required for good)")
+    p.add_argument("--correct", help="the correct result, when the user gave one")
+    p.add_argument("--note", help="the user's reason or comment")
+    p.add_argument("--file", type=_path, action="append", default=[], help="input file of the request (repeatable)")
+    p.set_defaults(func=cmd_feedback)
+
     p = sub.add_parser("status", help="show the progress of a workspace")
     p.add_argument("workspace", type=Path)
     p.set_defaults(func=cmd_status)
@@ -119,6 +150,10 @@ def _add_helper_commands(sub: Any) -> None:
                    help="e.g. .claude/skills (Claude Code) or .agents/skills (Codex)")
     p.add_argument("--force", action="store_true", help="overwrite skills that already exist in --dest")
     p.set_defaults(func=cmd_export)
+
+
+def _path(value: str) -> Path:
+    return Path(value).expanduser()  # PowerShell and quoted paths leave ~ unexpanded
 
 
 def _backend_args(p: argparse.ArgumentParser) -> None:
@@ -203,6 +238,26 @@ def cmd_evolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_improve(args: argparse.Namespace) -> int:
+    suite = _suite(args, require_answers=False)  # checked strictly below, after feedback is merged
+    ws, merged = prepare_generation(suite.root, suite.tasks_path, args.workspace, args.iterations, args.min_new)
+    if ws is None:
+        print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
+              f"a new generation starts at {args.min_new}")
+        return 0
+    suite = _suite(args)
+    backend, judge = _backends(args)
+    with _file_log(ws.root / "run.log"):
+        log.info("improve: suite=%s workspace=%s merged_feedback=%d", suite.name, ws.root, merged)
+        state = Evolution(suite, backend, ws, EvolveOptions(iterations=args.iterations, workers=args.workers),
+                          judge).run()
+    _print_status(state)
+    print(f"\nmerged feedback: {merged}\nskills: {ws.skills}")
+    for message in export_skills(ws.skills, args.export, suite.root) if args.export else []:
+        print(message)
+    return 0
+
+
 def cmd_evaluate(args: argparse.Namespace) -> int:
     suite = _suite(args)
     backend, judge = _backends(args)
@@ -238,6 +293,32 @@ def cmd_review_apply(args: argparse.Namespace) -> int:
     print(f"updated {suite.tasks_path} (backup: {suite.tasks_path.name}.bak): {counts}")
     if counts["ng_without_correction"]:
         print("note: some NG rows have no corrected_answer; those tasks still have no reference answer.")
+    return 0
+
+
+def cmd_init(args: argparse.Namespace) -> int:
+    if (args.suite / "suite.json").exists():
+        raise ConfigError(f"{args.suite / 'suite.json'} already exists")
+    if args.inputs is not None and not args.inputs.is_dir():
+        raise FileNotFoundError(f"--inputs {args.inputs} is not a folder")
+    example = EXAMPLES[args.like]
+    args.suite.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(str(example / "suite.json"), str(args.suite / "suite.json"))
+    if args.inputs is not None:
+        shutil.copytree(str(args.inputs), str(args.suite / "files"), dirs_exist_ok=True)
+    files = sorted(p.relative_to(args.suite / "files").as_posix() for p in (args.suite / "files").rglob("*")
+                   if p.is_file()) if (args.suite / "files").is_dir() else []
+    print(f"created {args.suite} from {example}\nnext: edit suite.json and write tasks.jsonl "
+          f"(example tasks: {example / 'tasks.jsonl'})\ninput files ({len(files)}): {', '.join(files[:20])}"
+          + (" ..." if len(files) > 20 else ""))
+    return 0
+
+
+def cmd_feedback(args: argparse.Namespace) -> int:
+    suite = load_suite(args.suite, require_answers=False)
+    task_id, count = record_feedback(suite, args.prompt, args.verdict, args.output, args.correct, args.note,
+                                     args.file)
+    print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`")
     return 0
 
 

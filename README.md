@@ -30,8 +30,10 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 ## Claude のプラグインとして使う（ターミナル操作なし）
 
 プラグインを入れると、Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、
-Claude が以下のコマンドを代わりに実行します。利用者の作業は**例のフォルダを伝えることと、頼まれたときに Excel で OK/NG を付けること**だけです。
-プラグインが常に消費するのは 1 セッションあたり約 40 トークンで、呼び出したときに約 700 トークン（手順書の読み込み）が加わります。
+Claude が以下のコマンドを代わりに実行します。利用者の作業は**例のフォルダを伝えることだけ**です。
+正解が無い業務は Claude が採点基準を書いて自動採点し、育ったスキルは自動で `~/.claude/skills` に入って全プロジェクトで使えるようになります。
+その後も、育ったスキルの結果に「良い」「違う、正しくは…」と言うだけで記録され、3 件たまると自動で育て直します（下の「使うほど賢くなる」）。
+プラグインが常に消費するのは 1 セッションあたり約 50 トークンで、呼び出したときに約 750 トークン（手順書の読み込み）が加わります。
 Python 3.9 以上と `claude`（または `codex`）コマンドは、下の「準備」と同じく必要です。
 
 入れ方は 3 通りあります。
@@ -46,8 +48,10 @@ Python 3.9 以上と `claude`（または `codex`）コマンドは、下の「�
 （Claude Code 2.1.275 より前は `/plugin marketplace add R1ck29/wikiskill` のあと `/plugin install wikiskill@wikiskill`）。
 入れたあとは `/wikiskill:wikiskill` で呼び出せます。話しかけるだけでも、通常は Claude が自動で呼び出します。
 
-**B. ZIP から単体で入れる**: 「Code → Download ZIP」で取得して展開し、`/plugin install wikiskill --marketplace <展開したフォルダ>`
-（`README.md` がある方のフォルダ）を実行します。フォルダは消さずに置いておきます。
+**B. ZIP から自分のグローバル設定に入れる（Claude に頼む）**: 「Code → Download ZIP」で取得して展開し、
+[INSTALL_PROMPT.md](INSTALL_PROMPT.md) の文章を Claude に貼り付けて送ります。Claude がコマンドを 1 回実行するだけで
+`~/.claude/skills/wikiskill` に入り、`/wikiskill` で使えます（ZIP のフォルダは消して構いません）。
+プラグインとして入れたい場合は `/plugin install wikiskill --marketplace <展開したフォルダ>` でも入ります（この場合はフォルダを残します）。
 
 **C. 社内の既存プラグイン（ハーネス）に組み込む**: マーケットプレイスに公開できない場合の方法です。プラグインの管理者が
 ZIP を展開したフォルダで次を 1 回実行し、あとはそのプラグインをいつもどおり配布します。
@@ -63,6 +67,19 @@ Python を実行できない場合は、`skills/wikiskill` フォルダを `<既
 その中に `wikiskill`・`docs`・`examples` の 3 フォルダをコピーしても同じです。
 
 育ったスキルを社内に配るときも同じプラグインが使えます。`export` の書き出し先を `<既存プラグイン>/skills` にして配布してください。
+
+### 使うほど賢くなる（実際の利用からの自動改善）
+
+```
+ 育ったスキルで作業 → 利用者が「良い」「違う、正しくは…」と言う
+   → feedback: その依頼・結果・正解をスイートの feedback.jsonl に記録（Claude が自動で実行）
+   → 3 件たまると improve: 記録を学習用・検証用タスクに加え、前の世代のスキルと wiki を引き継いだ
+     新しい世代（workspace/gen-NNN）で育て直し、検証で点が上がったときだけ採用 → ~/.claude/skills を自動更新
+```
+
+書き出したスキルの末尾には「結果の評価を WikiSkill に記録する」案内が付いているので、利用者が何も指示しなくても記録されます。
+上書きするのは WikiSkill が書き出したスキルだけです（同じ名前の自作スキルは上書きせずに知らせます）。
+正解が無い「違う」は、採点方法が `llm_judge`（または `script`）のスイートでだけ記録できます（数値などの採点では正しい答えを一言聞きます）。
 
 ## 準備
 
@@ -162,6 +179,9 @@ tasks.jsonl に正解と採点基準が書き込まれます（最初の元フ�
 | `review` / `review-apply` | ハイブリッド方式のレビュー |
 | `status DIR` | 反復ごとの採否と検証スコアを表示 |
 | `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し |
+| `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー |
+| `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル） |
+| `improve SUITE --workspace DIR --export DEST` | 世代を進めて育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上なら新しい世代、なければ何もしない |
 
 モデルを使うコマンド（`check`・`evolve`・`evaluate`・`review`）では `--backend claude|codex`、`--model`、
 `--backend-config`（CLI の引数を変える。[docs/CONFIGURATION.md](docs/CONFIGURATION.md)）が使えます。

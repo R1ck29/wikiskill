@@ -62,8 +62,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     except OSError as e:  # includes shutil.Error: disk full, permissions, locked files
         print(f"error: copy failed: {e}", file=sys.stderr)
         return 1
-    print(f"copied WikiSkill to {dest}\n"
-          f"check: claude plugin validate \"{args.target}\"   (then restart Claude)")
+    if args.skills_dir:
+        print(f"copied WikiSkill to {dest}\nstart a new Claude session to use it (/wikiskill)")
+    else:
+        print(f"copied WikiSkill to {dest}\n"
+              f"check: claude plugin validate \"{args.target}\"   (then restart Claude)")
     return 0
 
 
