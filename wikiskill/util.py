@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,13 @@ def write_text(path: Path, text: str) -> None:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
+
+
+def backup_once(path: Path) -> None:
+    """Copy `path` to `<name>.bak` unless that exists, so the original from before the first change is kept."""
+    backup = Path(path).with_name(Path(path).name + ".bak")
+    if not backup.exists():
+        shutil.copy2(str(path), str(backup))
 
 
 def append_text(path: Path, text: str) -> None:

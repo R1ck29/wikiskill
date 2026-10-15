@@ -2,11 +2,11 @@
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.fakes import TempDirTest
 from wikiskill import __version__
 from wikiskill.util import write_json
 
@@ -18,13 +18,6 @@ LAUNCHER = SKILL / "scripts" / "run_wikiskill.py"
 def run(*argv, cwd=None):
     return subprocess.run([sys.executable, *map(str, argv)], cwd=cwd, capture_output=True, text=True,
                           encoding="utf-8", timeout=120)
-
-
-class TempDirTest(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
 
 
 class LauncherTest(TempDirTest):

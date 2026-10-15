@@ -1,5 +1,7 @@
-"""A scripted in-process backend for loop tests (no CLI, no network)."""
+"""Test helpers: a scripted in-process backend for loop tests (no CLI, no network), temp-folder tests."""
 import json
+import tempfile
+import unittest
 from pathlib import Path
 
 from wikiskill.backends import AgentResult
@@ -55,3 +57,12 @@ class FakeBackend:
         else:
             skill = {"action": "create", "name": "be-careful", "skill_md": BAD_SKILL, "purpose_md": "# Purpose\n"}
         return json.dumps({"thought": "propose", "tool": "finish", "proposal": skill})
+
+
+class TempDirTest(unittest.TestCase):
+    """A test case with a fresh temporary folder in self.root."""
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)

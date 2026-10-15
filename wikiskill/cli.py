@@ -17,11 +17,10 @@ from .backends import make_backend
 from .config import ConfigError, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import EvolveOptions, Evolution
-from .improve import export_skills, pending, prepare_generation, record_feedback
+from .improve import MIN_NEW, export_skills, pending, prepare_generation, record_feedback
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
-from .skills import load_skills
-from .util import write_text
+from .skills import copy_skills, load_skills
 from .workspace import Workspace
 
 log = logging.getLogger("wikiskill")
@@ -64,13 +63,13 @@ def _add_run_commands(sub: Any) -> None:
     """Commands that run agents: check, evolve, improve, evaluate, review."""
     p = sub.add_parser("check", help="check Python, the CLI backend and (optionally) a suite")
     _backend_args(p)
-    p.add_argument("--suite", type=Path, help="also validate this suite")
+    p.add_argument("--suite", type=_path, help="also validate this suite")
     p.add_argument("--no-call", action="store_true", help="do not make test calls to the model")
     p.set_defaults(func=cmd_check)
 
     p = sub.add_parser("evolve", help="run the WikiSkill loop (resumes if the workspace exists)")
-    p.add_argument("suite", type=Path)
-    p.add_argument("--workspace", type=Path, required=True)
+    p.add_argument("suite", type=_path)
+    p.add_argument("--workspace", type=_path, required=True)
     _backend_args(p)
     _run_args(p)
     defaults = EvolveOptions()
@@ -85,17 +84,17 @@ def _add_run_commands(sub: Any) -> None:
     _backend_args(p)
     _run_args(p)
     p.add_argument("--iterations", type=int, default=3, help="iterations per generation (default %(default)s)")
-    p.add_argument("--min-new", type=int, default=3,
+    p.add_argument("--min-new", type=int, default=MIN_NEW,
                    help="pending feedback rows needed to start a new generation (default %(default)s)")
     p.add_argument("--export", type=_path, help="also copy the skills here, e.g. ~/.claude/skills")
     p.set_defaults(func=cmd_improve)
 
     p = sub.add_parser("evaluate", help="score a split with evolved skills (or none)")
-    p.add_argument("suite", type=Path)
-    p.add_argument("--out", type=Path, required=True, help="output folder (report.json, runs/)")
+    p.add_argument("suite", type=_path)
+    p.add_argument("--out", type=_path, required=True, help="output folder (report.json, runs/)")
     source = p.add_mutually_exclusive_group(required=True)
-    source.add_argument("--workspace", type=Path, help="use the skills of this workspace")
-    source.add_argument("--skills", type=Path, help="use the skills in this folder")
+    source.add_argument("--workspace", type=_path, help="use the skills of this workspace")
+    source.add_argument("--skills", type=_path, help="use the skills in this folder")
     source.add_argument("--no-skills", action="store_true", help="baseline without skills")
     p.add_argument("--split", default="test", choices=["train", "val", "test"])
     _backend_args(p)
@@ -103,8 +102,8 @@ def _add_run_commands(sub: Any) -> None:
     p.set_defaults(func=cmd_evaluate)
 
     p = sub.add_parser("review", help="hybrid mode: run tasks once and write a sheet for a person to check")
-    p.add_argument("suite", type=Path)
-    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("suite", type=_path)
+    p.add_argument("--out", type=_path, required=True)
     p.add_argument("--splits", default="train,val,test", help="comma separated (default %(default)s)")
     _backend_args(p)
     p.add_argument("--workers", type=int, default=EvolveOptions().workers, help="parallel agent runs")
@@ -114,14 +113,14 @@ def _add_run_commands(sub: Any) -> None:
 def _add_helper_commands(sub: Any) -> None:
     """Commands that only read or write files: compare, review-apply, feedback, status, export."""
     p = sub.add_parser("compare", help="paired bootstrap test between two report.json files (B minus A)")
-    p.add_argument("report_a", type=Path)
-    p.add_argument("report_b", type=Path)
+    p.add_argument("report_a", type=_path)
+    p.add_argument("report_b", type=_path)
     p.add_argument("--iterations", type=int, default=1000)
     p.set_defaults(func=cmd_compare)
 
     p = sub.add_parser("review-apply", help="hybrid mode: copy reviewed answers/rubrics into the tasks file")
-    p.add_argument("suite", type=Path)
-    p.add_argument("sheet", type=Path)
+    p.add_argument("suite", type=_path)
+    p.add_argument("sheet", type=_path)
     p.set_defaults(func=cmd_review_apply)
 
     p = sub.add_parser("init", help="start a suite from a bundled example and copy input files into it")
@@ -141,12 +140,12 @@ def _add_helper_commands(sub: Any) -> None:
     p.set_defaults(func=cmd_feedback)
 
     p = sub.add_parser("status", help="show the progress of a workspace")
-    p.add_argument("workspace", type=Path)
+    p.add_argument("workspace", type=_path)
     p.set_defaults(func=cmd_status)
 
     p = sub.add_parser("export", help="copy evolved skills into a Claude Code / Codex skills folder")
-    p.add_argument("workspace", type=Path)
-    p.add_argument("--dest", type=Path, required=True,
+    p.add_argument("workspace", type=_path)
+    p.add_argument("--dest", type=_path, required=True,
                    help="e.g. .claude/skills (Claude Code) or .agents/skills (Codex)")
     p.add_argument("--force", action="store_true", help="overwrite skills that already exist in --dest")
     p.set_defaults(func=cmd_export)
@@ -160,7 +159,7 @@ def _backend_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--backend", choices=["claude", "codex"], default="claude", help="default %(default)s")
     p.add_argument("--model", help="model name passed to the CLI (default: the CLI's own default)")
     p.add_argument("--judge-model", help="model for the llm_judge scorer (default: --model)")
-    p.add_argument("--backend-config", type=Path, help="JSON file overriding CLI flags (docs/CONFIGURATION.md)")
+    p.add_argument("--backend-config", type=_path, help="JSON file overriding CLI flags (docs/CONFIGURATION.md)")
 
 
 def _run_args(p: argparse.ArgumentParser) -> None:
@@ -304,10 +303,11 @@ def cmd_init(args: argparse.Namespace) -> int:
     example = EXAMPLES[args.like]
     args.suite.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(example / "suite.json"), str(args.suite / "suite.json"))
+    files_dir = args.suite / "files"
     if args.inputs is not None:
-        shutil.copytree(str(args.inputs), str(args.suite / "files"), dirs_exist_ok=True)
-    files = sorted(p.relative_to(args.suite / "files").as_posix() for p in (args.suite / "files").rglob("*")
-                   if p.is_file()) if (args.suite / "files").is_dir() else []
+        shutil.copytree(str(args.inputs), str(files_dir), dirs_exist_ok=True)
+    files_dir.mkdir(exist_ok=True)
+    files = sorted(p.relative_to(files_dir).as_posix() for p in files_dir.rglob("*") if p.is_file())
     print(f"created {args.suite} from {example}\nnext: edit suite.json and write tasks.jsonl "
           f"(example tasks: {example / 'tasks.jsonl'})\ninput files ({len(files)}): {', '.join(files[:20])}"
           + (" ..." if len(files) > 20 else ""))
@@ -318,7 +318,8 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     suite = load_suite(args.suite, require_answers=False)
     task_id, count = record_feedback(suite, args.prompt, args.verdict, args.output, args.correct, args.note,
                                      args.file)
-    print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`")
+    print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`"
+          + ("\nready: run `improve` to start a new generation" if count >= MIN_NEW else ""))
     return 0
 
 
@@ -345,16 +346,10 @@ def _fmt(value: Optional[float]) -> str:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    skills = load_skills(Workspace(args.workspace).skills)
-    if not skills:
+    copied = copy_skills(Workspace(args.workspace).skills, args.dest, lambda target: args.force)
+    if not copied:
         print("no skills to export")
         return EXIT_CONFIG
-    dest = args.dest.expanduser()  # PowerShell does not expand ~ for external commands
-    for name, text in skills:
-        target = dest / name / "SKILL.md"
-        if target.exists() and not args.force:
-            print(f"skip {name}: {target} exists (use --force to overwrite)")
-            continue
-        write_text(target, text)
-        print(f"exported {name} -> {target}")
+    for name, target, written in copied:
+        print(f"exported {name} -> {target}" if written else f"skip {name}: {target} exists (use --force to overwrite)")
     return 0

@@ -18,9 +18,9 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from .config import Suite, Task
+from .config import Suite
 from .maintainer import run_maintainer, sample_traces
 from .proposer import run_proposer
 from .rollout import format_trace, run_tasks
@@ -39,6 +39,11 @@ class EvolveOptions:
     seed: int = 0
     max_turns: int = 20  # paper: 10 <= T_ReAct <= 20 (Appendix D.2)
     min_traces: int = 4  # proposer rule 4 (Appendix E.3)
+
+
+def is_done(state: Dict[str, Any], iterations: int) -> bool:
+    """True when the loop has nothing left to do: K iterations used, or validation already 1.0 (line 4)."""
+    return state.get("r_best") is not None and (state["iteration"] > iterations or state["r_best"] >= 1.0)
 
 
 def mean(outcomes: Dict[str, Outcome]) -> float:
@@ -67,11 +72,10 @@ class Evolution:
             state.update(r_best=mean(outcomes), baseline=mean(outcomes))
             self.ws.save_state(state)
             log.info("baseline validation score (no skills): %.4f", state["r_best"])
-        while state["iteration"] <= self.opts.iterations:
-            if state["r_best"] >= 1.0:
-                log.info("validation score is 1.0; stopping early (Algorithm 1, line 4)")
-                break
+        while not is_done(state, self.opts.iterations):
             self._iteration(state)
+        if state["r_best"] >= 1.0:
+            log.info("validation score is 1.0; nothing left to improve (Algorithm 1, line 4)")
         return state
 
     def _load_state(self) -> Dict[str, Any]:

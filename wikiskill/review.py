@@ -9,14 +9,13 @@
 from __future__ import annotations
 
 import json
-import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
 from .config import Suite
 from .rollout import run_tasks
 from .scoring import ID_PREFIX, parse_verdict, read_review_rows, strip_id, write_sheet
-from .util import read_text, write_text
+from .util import backup_once, read_text, write_text
 
 COLUMNS = ["task_id", "verdict", "corrected_answer", "rubric_note", "prompt", "agent_answer", "output_dir"]
 
@@ -48,9 +47,7 @@ def apply_sheet(suite: Suite, sheet: Path) -> Dict[str, int]:
         if row is not None:
             _apply_row(task, row, counts)
         lines.append(json.dumps(task, ensure_ascii=False))
-    backup = suite.tasks_path.with_name(suite.tasks_path.name + ".bak")
-    if not backup.exists():  # keep the original from before the first review
-        shutil.copy2(suite.tasks_path, backup)
+    backup_once(suite.tasks_path)
     write_text(suite.tasks_path, "\n".join(lines) + "\n")
     return counts
 

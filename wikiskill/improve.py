@@ -16,8 +16,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .config import ANSWER_REQUIRED, ConfigError, Suite
-from .skills import load_skills
-from .util import append_text, is_windows_reserved, read_text, write_text
+from .evolve import is_done
+from .skills import copy_skills
+from .util import append_text, backup_once, is_windows_reserved, read_text, write_text
 from .workspace import Workspace
 
 FEEDBACK = "feedback.jsonl"
@@ -25,6 +26,7 @@ MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks
 FEEDBACK_FILES = "fb"  # input files of feedback rows: <files_dir>/fb/<id>/<name>
 FOOTER_MARK = "<!-- wikiskill:feedback -->"
 STAGING = "gen-next"  # a generation is prepared here, then renamed to gen-NNN
+MIN_NEW = 3  # pending feedback rows that start a new generation (improve --min-new default)
 
 
 def feedback_row(scorer_type: str, prompt: str, verdict: str, output: Optional[str] = None,
@@ -72,7 +74,9 @@ def record_feedback(suite: Suite, prompt: str, verdict: str, output: Optional[st
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(path, target)
         rel.append(f"{FEEDBACK_FILES}/{task_id}/{path.name}")
-    row = {"id": task_id, **row, **({"files": rel} if rel else {})}
+    row = {"id": task_id, **row}
+    if rel:
+        row["files"] = rel
     append_text(suite.root / FEEDBACK, json.dumps(row, ensure_ascii=False) + "\n")
     return task_id, len(pending(suite.root))
 
@@ -80,21 +84,16 @@ def record_feedback(suite: Suite, prompt: str, verdict: str, output: Optional[st
 def pending(suite_root: Path) -> List[Dict[str, Any]]:
     """Feedback rows not yet merged into the tasks file."""
     path = Path(suite_root) / FEEDBACK
-    if not path.is_file():
-        return []
-    return [json.loads(line) for line in read_text(path).splitlines() if line.strip()]
+    return _rows(read_text(path)) if path.is_file() else []
+
+
+def _rows(text: str) -> List[Dict[str, Any]]:
+    return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 # ----- improve: generations ----------------------------------------------------------
 def generations(root: Path) -> List[Path]:
     return sorted(p for p in Path(root).glob("gen-[0-9][0-9][0-9]") if p.is_dir())
-
-
-def finished(state: Optional[Dict[str, Any]], iterations: int) -> bool:
-    """True when `evolve` with this many iterations has nothing left to do (mirrors Evolution.run)."""
-    if state is None or state["r_best"] is None:
-        return False
-    return state["iteration"] > iterations or state["r_best"] >= 1.0
 
 
 def prepare_generation(suite_root: Path, tasks_path: Path, root: Path, iterations: int,
@@ -106,7 +105,7 @@ def prepare_generation(suite_root: Path, tasks_path: Path, root: Path, iteration
     """
     gens = generations(root)
     last = Workspace(gens[-1]) if gens else None
-    if last is not None and not finished(last.load_state(), iterations):
+    if last is not None and not is_done(last.load_state() or {}, iterations):
         return last, 0
     staging = Path(root) / STAGING  # left over only when a previous preparation was interrupted
     if last is not None and not staging.exists() and len(pending(suite_root)) < max(min_new, 1):
@@ -127,20 +126,23 @@ def prepare_generation(suite_root: Path, tasks_path: Path, root: Path, iteration
 
 def merge_pending(suite_root: Path, tasks_path: Path) -> int:
     """Move pending feedback into the tasks file (2 of 3 to train, 1 to val); return the count."""
-    rows = pending(suite_root)
+    queue = Path(suite_root) / FEEDBACK
+    if not queue.is_file():
+        return 0
+    text = read_text(queue)
+    rows = _rows(text)
     if not rows:
         return 0
     lines = [line for line in read_text(tasks_path).splitlines() if line.strip()]
     known = {str(json.loads(line).get("id", "")).lower() for line in lines}
     new = [r for r in rows if r["id"].lower() not in known]  # a crash may have merged some already
-    backup = tasks_path.with_name(tasks_path.name + ".bak")
-    if new and not backup.exists():
-        shutil.copy2(str(tasks_path), str(backup))
+    if new:
+        backup_once(tasks_path)
     for i, row in enumerate(new):
         lines.append(json.dumps({**row, "split": "val" if i % 3 == 2 else "train"}, ensure_ascii=False))
     write_text(tasks_path, "\n".join(lines) + "\n")
-    append_text(Path(suite_root) / MERGED, read_text(Path(suite_root) / FEEDBACK))
-    (Path(suite_root) / FEEDBACK).unlink()
+    append_text(Path(suite_root) / MERGED, text)
+    queue.unlink()
     return len(new)
 
 
@@ -152,12 +154,6 @@ def export_skills(skills_dir: Path, dest: Path, suite_root: Path) -> List[str]:
     footer = (f"\n\n{FOOTER_MARK}\n## Feedback for automatic improvement\n"
               "When the user judges a result of this skill (good, or wrong with the correct result), "
               f"record it with the wikiskill skill as feedback for the suite `{Path(suite_root)}`.\n")
-    messages = []
-    for name, text in load_skills(skills_dir):
-        target = Path(dest).expanduser() / name / "SKILL.md"
-        if target.exists() and FOOTER_MARK not in read_text(target):
-            messages.append(f"skip {name}: {target} was not written by wikiskill")
-            continue
-        write_text(target, text.rstrip("\n") + footer)
-        messages.append(f"exported {name} -> {target}")
-    return messages
+    copied = copy_skills(skills_dir, dest, lambda target: FOOTER_MARK in read_text(target), footer)
+    return [f"exported {name} -> {target}" if written else f"skip {name}: {target} was not written by wikiskill"
+            for name, target, written in copied]

@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 from .patching import PatchError, apply_edits, unified_diff
 from .util import is_windows_reserved, read_text, write_text
@@ -77,6 +77,20 @@ def load_skills(skills_dir: Path) -> List[Tuple[str, str]]:
         for d in sorted(skills_dir.iterdir())
         if d.is_dir() and (d / "SKILL.md").is_file()
     ]
+
+
+def copy_skills(skills_dir: Path, dest: Path, may_overwrite: Callable[[Path], bool],
+                footer: str = "") -> List[Tuple[str, Path, bool]]:
+    """Copy each SKILL.md to dest/<name>/SKILL.md (plus `footer`); return (name, target, written)."""
+    copied = []
+    for name, text in load_skills(skills_dir):
+        target = Path(dest) / name / "SKILL.md"
+        if target.exists() and not may_overwrite(target):
+            copied.append((name, target, False))
+            continue
+        write_text(target, text.rstrip("\n") + footer if footer else text)
+        copied.append((name, target, True))
+    return copied
 
 
 def render_skill_section(skills: List[Tuple[str, str]]) -> str:

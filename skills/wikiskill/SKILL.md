@@ -13,7 +13,7 @@ allowed-tools: Bash(python3 "${CLAUDE_SKILL_DIR}/scripts/run_wikiskill.py" *) Ba
 ## 実行方法とトークン節約（必ず守る）
 
 `WS` は `python3 "${CLAUDE_SKILL_DIR}/scripts/run_wikiskill.py"` を表します（パスは必ずこの形でダブルクォート。
-Windows は `python3` を `py`、無ければ `python` に。古い Python でも新しい `python3.X` があれば自動で使われます）。
+Windows は `python3` を `py`、無ければ `python` に）。
 `WS` は単独で実行し、`;` `&&` `echo` などを付け足さない（終了コードは結果に表示される。付け足すと許可の確認が出る）。
 
 - 最初に `WS check --no-call`。`claude`（または `codex`）が `NOT FOUND` なら、社内の手順で CLI を入れるよう伝えて止まる。
@@ -55,7 +55,7 @@ Windows は `python3` を `py`、無ければ `python` に。古い Python で�
 （違うと言われ正しい内容がわかれば `--correct '<正しい結果>'`、理由は `--note '<理由>'`、入力ファイルは `--file <パス>` を足す）。
 
 - 終了コード 2 で `--correct` が必要と出たら、正しい答えを一言だけ聞く（答えがなければ記録しない）。
-- 出力の待ち件数が 3 件以上なら、利用者に断らずに A-3 と同じ `improve` をバックグラウンドで実行し、終わったら 1 行で伝える。
+- 出力に `ready` と出たら、利用者に断らずに A-3 と同じ `improve` をバックグラウンドで実行し、終わったら 1 行で伝える。
 - 理由などを追加で聞かない。記録したことは「覚えました」と一言だけ伝える。
 - 文中に `'` を含むときは、その引数をダブルクォートで囲む（`"` `$` `` ` `` は `\` を前に付ける）。
 

@@ -1,17 +1,17 @@
 """Learning from real usage: `feedback` (pending queue) and `improve` (generations)."""
 import json
 import re
-import tempfile
 import unittest
 from pathlib import Path
 
 from unittest import mock
 
-from tests.fakes import FakeBackend
+from tests.fakes import FakeBackend, TempDirTest
 from tests.test_cli import run_cli
 from tests.test_evolve import write_suite
 from wikiskill.config import load_suite
-from wikiskill.improve import (FEEDBACK, FOOTER_MARK, MERGED, finished, generations, merge_pending, pending,
+from wikiskill.evolve import is_done
+from wikiskill.improve import (FEEDBACK, FOOTER_MARK, MERGED, generations, merge_pending, pending,
                                prepare_generation)
 from wikiskill.util import read_text
 from wikiskill.workspace import Workspace
@@ -23,11 +23,9 @@ def set_scorer(suite_dir: Path, scorer: dict) -> None:
     (suite_dir / "suite.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
-class FeedbackTest(unittest.TestCase):
+class FeedbackTest(TempDirTest):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        super().setUp()
         self.suite = write_suite(self.root / "suite")  # exact scorer: answers required
 
     def feedback(self, *argv):
@@ -48,6 +46,7 @@ class FeedbackTest(unittest.TestCase):
                                   "--file", source)
         self.assertEqual(code, 0, out)
         self.assertIn("1 feedback row(s)", out)
+        self.assertNotIn("ready", out)
         (row,) = pending(self.suite)
         self.assertEqual((row["prompt"], row["answer"]), ("1月の合計は？", "4090"))
         self.assertEqual(row["files"], [f"fb/{row['id']}/jan.csv"])
@@ -104,12 +103,7 @@ class FeedbackTest(unittest.TestCase):
         self.assertEqual(len(load_suite(self.suite).tasks), 8 + 2)
 
 
-class InitTest(unittest.TestCase):
-    def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
-
+class InitTest(TempDirTest):
     def test_suite_starts_from_an_example_with_the_users_files(self):
         inputs = self.root / "examples-from-user"
         (inputs / "2026-01").mkdir(parents=True)
@@ -127,11 +121,9 @@ class InitTest(unittest.TestCase):
                                  self.root / "missing")[0], 2)
 
 
-class ImproveTest(unittest.TestCase):
+class ImproveTest(TempDirTest):
     def setUp(self):
-        tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(tmp.cleanup)
-        self.root = Path(tmp.name)
+        super().setUp()
         self.suite = write_suite(self.root / "suite")
         self.ws = self.root / "ws"
         self.dest = self.root / "home" / "skills"
@@ -162,7 +154,8 @@ class ImproveTest(unittest.TestCase):
         self.add_feedback(2)
         self.assertIn("nothing to do: 2", self.improve()[1])  # below --min-new 3
 
-        self.add_feedback(1)
+        code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", "real 9", "--output", "TOTAL")
+        self.assertIn("ready: run `improve`", out)  # the third row tells the caller to start a generation
         code, out = self.improve()
         self.assertEqual(code, 0, out)
         self.assertIn("merged feedback: 3", out)
@@ -185,9 +178,9 @@ class ImproveTest(unittest.TestCase):
         chosen, merged = prepare_generation(self.suite, self.suite / "tasks.jsonl", self.ws, 3, 3)
         self.assertEqual((chosen.root, merged), (ws.root, 0))
         self.assertEqual(len(pending(self.suite)), 3)
-        self.assertTrue(finished({"iteration": 4, "r_best": 0.5}, 3))
-        self.assertTrue(finished({"iteration": 2, "r_best": 1.0}, 3))
-        self.assertFalse(finished({"iteration": 1, "r_best": None}, 3))
+        self.assertTrue(is_done({"iteration": 4, "r_best": 0.5}, 3))
+        self.assertTrue(is_done({"iteration": 2, "r_best": 1.0}, 3))
+        self.assertFalse(is_done({"iteration": 1, "r_best": None}, 3))
 
     def test_an_interrupted_preparation_is_redone(self):
         self.assertEqual(self.improve()[0], 0)  # gen-001 finished
