@@ -129,7 +129,7 @@ test タスクでスキルなし／ありを比べ、差が偶然でないかを
 python -m wikiskill export workspaces/sales --dest ~/.claude/skills
 ```
 
-育ったスキルを書き出します。書き出し先は使い方に合わせて選びます。
+育ったスキルを書き出します（0.2.2 以降の `export` で書き出したスキルも、後の `improve --export` で自動更新されます）。書き出し先は使い方に合わせて選びます。
 
 | 使い方 | `--dest` |
 |---|---|
@@ -181,7 +181,7 @@ tasks.jsonl に正解と採点基準が書き込まれます（最初の元フ�
 | `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し |
 | `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー |
 | `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル） |
-| `improve SUITE --workspace DIR --export DEST` | 世代を進めて育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上なら新しい世代、なければ何もしない |
+| `improve SUITE --workspace DIR --export DEST` | 世代を進めて育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上なら新しい世代、なければ最新の世代のスキルを書き出すだけ |
 
 モデルを使うコマンド（`check`・`evolve`・`evaluate`・`review`）では `--backend claude|codex`、`--model`、
 `--backend-config`（CLI の引数を変える。[docs/CONFIGURATION.md](docs/CONFIGURATION.md)）が使えます。

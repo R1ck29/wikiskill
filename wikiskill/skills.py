@@ -17,6 +17,8 @@ from .util import is_windows_reserved, read_text, write_text
 
 NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 MAX_NAME, MAX_DESCRIPTION = 64, 1024
+# ends every exported SKILL.md, so a later export knows wikiskill wrote it ("feedback": kept from 0.2.0 exports)
+EXPORT_MARK = "<!-- wikiskill:feedback -->"
 
 
 class SkillError(ValueError):
@@ -81,16 +83,21 @@ def load_skills(skills_dir: Path) -> List[Tuple[str, str]]:
 
 def copy_skills(skills_dir: Path, dest: Path, may_overwrite: Callable[[Path], bool],
                 footer: str = "") -> List[Tuple[str, Path, bool]]:
-    """Copy each SKILL.md to dest/<name>/SKILL.md (plus `footer`); return (name, target, written)."""
+    """Copy each SKILL.md to dest/<name>/SKILL.md (plus EXPORT_MARK and `footer`); return (name, target, written)."""
     copied = []
     for name, text in load_skills(skills_dir):
         target = Path(dest) / name / "SKILL.md"
         if target.exists() and not may_overwrite(target):
             copied.append((name, target, False))
             continue
-        write_text(target, text.rstrip("\n") + footer if footer else text)
+        write_text(target, text.rstrip("\n") + f"\n\n{EXPORT_MARK}\n{footer}")
         copied.append((name, target, True))
     return copied
+
+
+def exported_by_wikiskill(target: Path) -> bool:
+    """True when `target` was written by copy_skills, so a later export may replace it."""
+    return EXPORT_MARK in read_text(target)
 
 
 def render_skill_section(skills: List[Tuple[str, str]]) -> str:

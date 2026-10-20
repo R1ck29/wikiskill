@@ -17,7 +17,7 @@ from .backends import make_backend
 from .config import ConfigError, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import EvolveOptions, Evolution
-from .improve import MIN_NEW, export_skills, pending, prepare_generation, record_feedback
+from .improve import MIN_NEW, export_skills, generations, pending, prepare_generation, record_feedback
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
 from .skills import copy_skills, load_skills
@@ -238,13 +238,22 @@ def cmd_evolve(args: argparse.Namespace) -> int:
 
 
 def cmd_improve(args: argparse.Namespace) -> int:
-    suite = _suite(args, require_answers=False)  # checked strictly below, after feedback is merged
+    suite = _suite(args, require_answers=False)  # checked strictly in _evolve_generation, after the merge
     ws, merged = prepare_generation(suite.root, suite.tasks_path, args.workspace, args.iterations, args.min_new)
     if ws is None:
         print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
               f"a new generation starts at {args.min_new}")
-        return 0
-    suite = _suite(args)
+        ws = Workspace(generations(args.workspace)[-1])  # the last generation exists and is finished
+    else:
+        _evolve_generation(args, ws, merged)
+    if args.export:  # also when there is nothing to do, so a missed or manual export is brought up to date
+        for message in export_skills(ws.skills, args.export, suite.root):
+            print(message)
+    return 0
+
+
+def _evolve_generation(args: argparse.Namespace, ws: Workspace, merged: int) -> None:
+    suite = _suite(args)  # strict check now that the feedback is merged
     backend, judge = _backends(args)
     with _file_log(ws.root / "run.log"):
         log.info("improve: suite=%s workspace=%s merged_feedback=%d", suite.name, ws.root, merged)
@@ -252,9 +261,6 @@ def cmd_improve(args: argparse.Namespace) -> int:
                           judge).run()
     _print_status(state)
     print(f"\nmerged feedback: {merged}\nskills: {ws.skills}")
-    for message in export_skills(ws.skills, args.export, suite.root) if args.export else []:
-        print(message)
-    return 0
 
 
 def cmd_evaluate(args: argparse.Namespace) -> int:

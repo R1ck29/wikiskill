@@ -11,10 +11,13 @@ from tests.test_cli import run_cli
 from tests.test_evolve import write_suite
 from wikiskill.config import load_suite
 from wikiskill.evolve import is_done
-from wikiskill.improve import (FEEDBACK, FOOTER_MARK, MERGED, generations, merge_pending, pending,
+from wikiskill.improve import (FEEDBACK, MERGED, generations, merge_pending, pending,
                                prepare_generation)
+from wikiskill.skills import EXPORT_MARK
 from wikiskill.util import read_text
 from wikiskill.workspace import Workspace
+
+FEEDBACK_HEADING = "## Feedback for automatic improvement"
 
 
 def set_scorer(suite_dir: Path, scorer: dict) -> None:
@@ -145,7 +148,7 @@ class ImproveTest(TempDirTest):
         self.assertEqual(code, 0, out)
         self.assertEqual([p.name for p in generations(self.ws)], ["gen-001"])
         exported = read_text(self.dest / "report-total" / "SKILL.md")
-        self.assertIn(FOOTER_MARK, exported)
+        self.assertIn(FEEDBACK_HEADING, exported)
         self.assertIn(str(self.suite.resolve()), exported)
 
         code, out = self.improve()  # finished and no feedback yet
@@ -207,6 +210,21 @@ class ImproveTest(TempDirTest):
         self.assertEqual(merge_pending(self.suite, self.suite / "tasks.jsonl"), 0)
         self.assertEqual(len(load_suite(self.suite).tasks), 9)
         self.assertEqual(pending(self.suite), [])
+
+    def test_nothing_to_do_still_exports_and_takes_over_manual_exports(self):
+        self.assertEqual(self.improve()[0], 0)
+        exported = self.dest / "report-total" / "SKILL.md"
+        code, out = run_cli("export", self.ws / "gen-001", "--dest", self.dest, "--force")
+        self.assertEqual(code, 0, out)
+        self.assertIn(EXPORT_MARK, read_text(exported))
+        self.assertNotIn(FEEDBACK_HEADING, read_text(exported))
+        code, out = self.improve()  # nothing to do, but the manual export gets the feedback footer back
+        self.assertEqual(code, 0, out)
+        self.assertIn("nothing to do", out)
+        self.assertIn(FEEDBACK_HEADING, read_text(exported))
+        exported.unlink()
+        self.assertEqual(self.improve()[0], 0)
+        self.assertIn(FEEDBACK_HEADING, read_text(exported))
 
     def test_export_never_overwrites_a_foreign_skill(self):
         foreign = self.dest / "report-total" / "SKILL.md"

@@ -17,14 +17,13 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .config import ANSWER_REQUIRED, ConfigError, Suite
 from .evolve import is_done
-from .skills import copy_skills
+from .skills import copy_skills, exported_by_wikiskill
 from .util import append_text, backup_once, is_windows_reserved, read_text, write_text
 from .workspace import Workspace
 
 FEEDBACK = "feedback.jsonl"
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
 FEEDBACK_FILES = "fb"  # input files of feedback rows: <files_dir>/fb/<id>/<name>
-FOOTER_MARK = "<!-- wikiskill:feedback -->"
 STAGING = "gen-next"  # a generation is prepared here, then renamed to gen-NNN
 MIN_NEW = 3  # pending feedback rows that start a new generation (improve --min-new default)
 
@@ -149,11 +148,11 @@ def merge_pending(suite_root: Path, tasks_path: Path) -> int:
 def export_skills(skills_dir: Path, dest: Path, suite_root: Path) -> List[str]:
     """Copy skills to `dest` with a footer that routes users' judgements back as feedback.
 
-    Only files this function wrote before (they carry FOOTER_MARK) are overwritten.
+    Only files exported by wikiskill before (`export` or this function) are overwritten.
     """
-    footer = (f"\n\n{FOOTER_MARK}\n## Feedback for automatic improvement\n"
+    footer = ("## Feedback for automatic improvement\n"
               "When the user judges a result of this skill (good, or wrong with the correct result), "
               f"record it with the wikiskill skill as feedback for the suite `{Path(suite_root)}`.\n")
-    copied = copy_skills(skills_dir, dest, lambda target: FOOTER_MARK in read_text(target), footer)
+    copied = copy_skills(skills_dir, dest, exported_by_wikiskill, footer)
     return [f"exported {name} -> {target}" if written else f"skip {name}: {target} was not written by wikiskill"
             for name, target, written in copied]

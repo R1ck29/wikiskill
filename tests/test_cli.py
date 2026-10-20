@@ -11,6 +11,8 @@ from tests.test_evolve import write_suite
 from wikiskill.cli import EXIT_CONFIG, EXIT_REVIEW, main
 from wikiskill.config import load_suite
 from wikiskill.evolve import EvolveOptions, Evolution
+from wikiskill.skills import EXPORT_MARK
+from wikiskill.util import read_text
 from wikiskill.workspace import Workspace
 
 
@@ -38,7 +40,7 @@ class CLITest(unittest.TestCase):
         dest = self.root / "project" / ".claude" / "skills"
         code, out = run_cli("export", self.ws.root, "--dest", dest)
         self.assertEqual(code, 0)
-        self.assertTrue((dest / "report-total" / "SKILL.md").is_file())
+        self.assertIn(EXPORT_MARK, read_text(dest / "report-total" / "SKILL.md"))
         self.assertFalse((dest / "report-total" / "PURPOSE.md").exists())
         code, out = run_cli("export", self.ws.root, "--dest", dest)
         self.assertIn("skip report-total", out)
