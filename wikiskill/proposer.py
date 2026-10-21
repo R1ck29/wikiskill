@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from .config import Suite, Task
 from .scoring import Outcome
@@ -32,7 +32,7 @@ class ReadSandbox:
 
     def __init__(self, ws: Workspace, iteration: int) -> None:
         self.ws, self.traces_dir = ws, ws.raw_dir(iteration) / "traces"
-        self.traces_read: Set[str] = set()
+        self.traces_read: set[str] = set()
 
     def read(self, path: str) -> str:
         try:
@@ -63,7 +63,7 @@ class ReadSandbox:
         return truncate(read_text(target), OBSERVATION_CHARS)
 
 
-def outcome_summary(tasks: List[Task], outcomes: Dict[str, Outcome]) -> str:
+def outcome_summary(tasks: list[Task], outcomes: dict[str, Outcome]) -> str:
     """Concise table of every training task: pass/fail, prediction and ground truth."""
     rows = ["| task_id | result | score | agent answer | expected answer / reviewer note |", "|---|---|---|---|---|"]
     for task in tasks:
@@ -79,7 +79,7 @@ def _cell(text: str) -> str:
     return text if len(text) <= CELL_CHARS else text[:CELL_CHARS] + "..."
 
 
-def initial_context(ws: Workspace, tasks: List[Task], outcomes: Dict[str, Outcome]) -> str:
+def initial_context(ws: Workspace, tasks: list[Task], outcomes: dict[str, Outcome]) -> str:
     skills = [name for name, _ in load_skills(ws.skills)]
     return (
         f"## wiki/index.md\n{read_text(ws.wiki / 'index.md')}\n\n"
@@ -89,8 +89,8 @@ def initial_context(ws: Workspace, tasks: List[Task], outcomes: Dict[str, Outcom
     )
 
 
-def run_proposer(backend: Any, ws: Workspace, suite: Suite, iteration: int, tasks: List[Task],
-                 outcomes: Dict[str, Outcome], max_turns: int = 20, min_traces: int = 4) -> Dict[str, Any]:
+def run_proposer(backend: Any, ws: Workspace, suite: Suite, iteration: int, tasks: list[Task],
+                 outcomes: dict[str, Outcome], max_turns: int = 20, min_traces: int = 4) -> dict[str, Any]:
     """Run the ReAct loop and return a validated proposal (create / patch / no_action)."""
     system = PROMPT.replace("{task_desc}", suite.task_description)
     sandbox = ReadSandbox(ws, iteration)
@@ -127,7 +127,7 @@ def _step(reply: str, sandbox: ReadSandbox, ws: Workspace, required_reads: int):
     return (f"ERROR: {error}", None) if error else ("Proposal accepted for validation.", proposal)
 
 
-def validate_proposal(proposal: Any, ws: Workspace, traces_read: int, required_reads: int) -> Optional[str]:
+def validate_proposal(proposal: Any, ws: Workspace, traces_read: int, required_reads: int) -> str | None:
     """Return an error message, or None if the proposal can be applied."""
     if not isinstance(proposal, dict):
         return "'proposal' must be a JSON object."

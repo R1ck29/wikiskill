@@ -15,7 +15,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable
 
 from .config import Suite, Task
 from .util import csv_cell, csv_value, extract_json_object, truncate
@@ -36,7 +36,7 @@ TEXT_COLUMNS = ("comment", "prompt", "reference", "agent_answer", "corrected_ans
 class HumanReviewPending(Exception):
     """Raised when a review sheet must be filled in before the run can continue."""
 
-    def __init__(self, sheet: Path, missing: List[str]) -> None:
+    def __init__(self, sheet: Path, missing: list[str]) -> None:
         super().__init__(f"human review needed: fill in {sheet} ({len(missing)} rows open)")
         self.sheet, self.missing = sheet, missing
 
@@ -61,13 +61,13 @@ def normalize(text: Any) -> str:
     return " ".join(unicodedata.normalize("NFKC", str(text)).casefold().split())
 
 
-def parse_number(text: Any) -> Optional[float]:
+def parse_number(text: Any) -> float | None:
     text = normalize(text).replace(",", "").replace("\u2212", "-")  # U+2212 minus sign
     match = _NUMBER_RE.search(text)
     return float(match.group()) if match else None
 
 
-def _answers(task: Task) -> List[Any]:
+def _answers(task: Task) -> list[Any]:
     return task.answer if isinstance(task.answer, list) else [task.answer]
 
 
@@ -91,11 +91,11 @@ def score_number(task: Task, pred: str, cfg: dict) -> float:
     return float(any(_close(value, parse_number(a), rel, abs_) for a in _answers(task)))
 
 
-def _close(value: float, target: Optional[float], rel: float, abs_: float) -> bool:
+def _close(value: float, target: float | None, rel: float, abs_: float) -> bool:
     return target is not None and math.isclose(value, target, rel_tol=rel, abs_tol=abs_)
 
 
-SIMPLE_SCORERS: Dict[str, Callable[[Task, str, dict], float]] = {
+SIMPLE_SCORERS: dict[str, Callable[[Task, str, dict], float]] = {
     "exact": score_exact, "contains": score_contains, "regex": score_regex, "number": score_number,
 }
 
@@ -111,9 +111,9 @@ class Scorer:
 
     def __init__(self, suite: Suite, judge: Any = None) -> None:
         self.suite, self.cfg, self.judge = suite, suite.scorer, judge
-        self._script: Optional[Callable] = None
+        self._script: Callable | None = None
 
-    def auto(self, task: Task, result: "RolloutResult") -> Tuple[float, str]:
+    def auto(self, task: Task, result: RolloutResult) -> tuple[float, str]:
         if not result.ok:
             return 0.0, f"agent run failed: {result.error}"
         kind, pred = self.cfg["type"], result.prediction
@@ -123,13 +123,13 @@ class Scorer:
             return self._score_script(task, result)
         return self._score_judge(task, result)
 
-    def _score_script(self, task: Task, result: "RolloutResult") -> Tuple[float, str]:
+    def _score_script(self, task: Task, result: RolloutResult) -> tuple[float, str]:
         try:
             return self._call_script(task, result)
-        except Exception as e:  # a scorer bug or a missing output file must not stop the run
+        except Exception as e:  # noqa: BLE001 -- a scorer bug or a missing output file must not stop the run
             return 0.0, f"scorer script error: {type(e).__name__}: {e}"
 
-    def _call_script(self, task: Task, result: "RolloutResult") -> Tuple[float, str]:
+    def _call_script(self, task: Task, result: RolloutResult) -> tuple[float, str]:
         if self._script is None:
             path = (self.suite.root / self.cfg["path"]).resolve()
             spec = importlib.util.spec_from_file_location("wikiskill_user_scorer", path)
@@ -141,7 +141,7 @@ class Scorer:
         score, note = value if isinstance(value, tuple) else (value, "")
         return _clamp(score), str(note)
 
-    def _score_judge(self, task: Task, result: "RolloutResult") -> Tuple[float, str]:
+    def _score_judge(self, task: Task, result: RolloutResult) -> tuple[float, str]:
         if self.judge is None:
             raise ValueError("llm_judge scorer needs a judge backend")
         rubric = "\n".join(r for r in (self.cfg.get("rubric", ""), task.rubric or "") if r)  # shared + per task
@@ -157,8 +157,8 @@ class Scorer:
             return 0.0, f"judge output unusable: {e}"
 
     # ----- whole result sets ---------------------------------------------------------
-    def score_all(self, tasks: List[Task], results: Dict[str, "RolloutResult"],
-                  sheet: Optional[Path] = None) -> Dict[str, Outcome]:
+    def score_all(self, tasks: list[Task], results: dict[str, RolloutResult],
+                  sheet: Path | None = None) -> dict[str, Outcome]:
         """Automatic scores, or human verdicts from `sheet` when the suite uses human review."""
         if self.suite.human_review:
             if sheet is None:
@@ -171,8 +171,8 @@ class Scorer:
             for t in tasks for s, note in [scored[t.id]]
         }
 
-    def _human_verdicts(self, tasks: List[Task], results: Dict[str, "RolloutResult"],
-                        sheet: Path) -> Dict[str, Tuple[float, str]]:
+    def _human_verdicts(self, tasks: list[Task], results: dict[str, RolloutResult],
+                        sheet: Path) -> dict[str, tuple[float, str]]:
         """Read verdicts; write the sheet (or add rows for tasks it lacks) and pause if any are open."""
         rows = read_review_rows(sheet) if sheet.is_file() else []
         current = {t.id: self._sheet_row(t, results[t.id]) for t in tasks}
@@ -188,7 +188,7 @@ class Scorer:
             raise HumanReviewPending(sheet, missing)
         return {t.id: verdicts[t.id] for t in tasks}
 
-    def _sheet_row(self, task: Task, result: "RolloutResult") -> Dict[str, str]:
+    def _sheet_row(self, task: Task, result: RolloutResult) -> dict[str, str]:
         hint = ""
         if task.answer is not None and self.cfg["type"] in SIMPLE_SCORERS and result.ok:
             hint = f"{self.auto(task, result)[0]:g}"
@@ -200,7 +200,7 @@ class Scorer:
         }
 
 
-def answer_key(result: "RolloutResult") -> str:
+def answer_key(result: RolloutResult) -> str:
     """Short hash of the reviewed output: a verdict only counts for the answer it was given for."""
     text = f"{result.ok}\0{result.final_text}\0{','.join(result.files)}"
     return "h:" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
@@ -213,10 +213,10 @@ def _clamp(value: Any) -> float:
 
 def strip_id(value: str) -> str:
     value = (value or "").strip()
-    return value[len(ID_PREFIX):] if value.startswith(ID_PREFIX) else value
+    return value.removeprefix(ID_PREFIX)
 
 
-def parse_verdict(value: str) -> Optional[float]:
+def parse_verdict(value: str) -> float | None:
     """OK / NG words (English or Japanese) or a number in [0, 1]; None when blank."""
     text = normalize(value)
     if not text:
@@ -234,12 +234,12 @@ def parse_verdict(value: str) -> Optional[float]:
     return number
 
 
-def write_review_sheet(path: Path, rows: List[Dict[str, str]]) -> None:
+def write_review_sheet(path: Path, rows: list[dict[str, str]]) -> None:
     """UTF-8 with BOM so Excel on Windows shows Japanese correctly."""
     write_sheet(path, REVIEW_COLUMNS, rows)
 
 
-def write_sheet(path: Path, columns: List[str], rows: List[Dict[str, str]]) -> None:
+def write_sheet(path: Path, columns: list[str], rows: list[dict[str, str]]) -> None:
     """Write a CSV for Excel: UTF-8 with BOM, and text cells that look like formulas are escaped."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
@@ -249,7 +249,7 @@ def write_sheet(path: Path, columns: List[str], rows: List[Dict[str, str]]) -> N
             writer.writerow({k: csv_cell(str(v)) if k in TEXT_COLUMNS and v else v for k, v in row.items()})
 
 
-def read_review_rows(path: Path) -> List[Dict[str, str]]:
+def read_review_rows(path: Path) -> list[dict[str, str]]:
     """Read a review sheet saved as UTF-8 (with or without BOM) or as Excel's Shift_JIS (cp932)."""
     raw = Path(path).read_bytes()
     for encoding in ("utf-8-sig", "cp932"):
@@ -267,7 +267,7 @@ def read_review_rows(path: Path) -> List[Dict[str, str]]:
     return rows
 
 
-def read_review_sheet(path: Path) -> Dict[str, Tuple[float, str]]:
+def read_review_sheet(path: Path) -> dict[str, tuple[float, str]]:
     """{task_id: (score, comment)} for every row whose verdict is filled in."""
     verdicts = {}
     for row in read_review_rows(path):

@@ -12,8 +12,9 @@ from __future__ import annotations
 import contextlib
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Dict, Iterator, Optional
+from typing import Any
 
 from .util import read_json, write_json, write_text
 
@@ -60,23 +61,21 @@ class Workspace:
         try:
             yield
         finally:
-            try:
+            with contextlib.suppress(FileNotFoundError):
                 path.unlink()
-            except FileNotFoundError:
-                pass
 
     # ----- state -------------------------------------------------------------
-    def load_state(self) -> Optional[Dict[str, Any]]:
+    def load_state(self) -> dict[str, Any] | None:
         return read_json(self.state_path) if self.state_path.is_file() else None
 
-    def save_state(self, state: Dict[str, Any]) -> None:
+    def save_state(self, state: dict[str, Any]) -> None:
         write_json(self.state_path, state)
 
     # ----- raw layer -----------------------------------------------------------
     def raw_dir(self, iteration: int) -> Path:
         return self.raw / f"iter_{iteration:03d}"
 
-    def write_raw(self, iteration: int, traces: Dict[str, str], summary: Any) -> Path:
+    def write_raw(self, iteration: int, traces: dict[str, str], summary: Any) -> Path:
         """Store one iteration's training traces. The Raw Layer is write-once."""
         final = self.raw_dir(iteration)
         if final.exists():

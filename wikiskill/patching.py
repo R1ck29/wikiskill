@@ -8,7 +8,7 @@ Operations follow the paper's prompts (Appendix E.2/E.3):
 from __future__ import annotations
 
 import difflib
-from typing import Iterable
+from collections.abc import Iterable
 
 
 class PatchError(ValueError):

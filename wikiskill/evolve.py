@@ -18,7 +18,7 @@ import logging
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from .config import Suite
 from .maintainer import run_maintainer, sample_traces
@@ -41,12 +41,12 @@ class EvolveOptions:
     min_traces: int = 4  # proposer rule 4 (Appendix E.3)
 
 
-def is_done(state: Dict[str, Any], iterations: int) -> bool:
+def is_done(state: dict[str, Any], iterations: int) -> bool:
     """True when the loop has nothing left to do: K iterations used, or validation already 1.0 (line 4)."""
     return state.get("r_best") is not None and (state["iteration"] > iterations or state["r_best"] >= 1.0)
 
 
-def mean(outcomes: Dict[str, Outcome]) -> float:
+def mean(outcomes: dict[str, Outcome]) -> float:
     return sum(o.score for o in outcomes.values()) / len(outcomes) if outcomes else 0.0
 
 
@@ -59,12 +59,12 @@ class Evolution:
         self.scorer = Scorer(suite, judge or backend)
 
     # ----- driver ------------------------------------------------------------------
-    def run(self) -> Dict[str, Any]:
+    def run(self) -> dict[str, Any]:
         self.ws.init()
         with self.ws.lock():
             return self._run()
 
-    def _run(self) -> Dict[str, Any]:
+    def _run(self) -> dict[str, Any]:
         state = self._load_state()
         if state["r_best"] is None:
             outcomes = self._score_split("val", load_skills(self.ws.skills), "baseline_val",
@@ -78,7 +78,7 @@ class Evolution:
             log.info("validation score is 1.0; nothing left to improve (Algorithm 1, line 4)")
         return state
 
-    def _load_state(self) -> Dict[str, Any]:
+    def _load_state(self) -> dict[str, Any]:
         state = self.ws.load_state()
         if state is None:
             state = {"suite": self.suite.name, "backend": getattr(self.backend, "name", "?"),
@@ -95,7 +95,7 @@ class Evolution:
                              "not be comparable. Use a new --workspace (answers and rubrics may change freely).")
         return state
 
-    def _iteration(self, state: Dict[str, Any]) -> None:
+    def _iteration(self, state: dict[str, Any]) -> None:
         k = state["iteration"]
         log.info("=== iteration %d/%d (stage: %s, best val %.4f) ===", k, self.opts.iterations,
                  state["stage"], state["r_best"])
@@ -117,7 +117,7 @@ class Evolution:
             self._advance(state, "commit")
         self._commit(state)
 
-    def _advance(self, state: Dict[str, Any], stage: str) -> None:
+    def _advance(self, state: dict[str, Any], stage: str) -> None:
         state["stage"] = stage
         self.ws.save_state(state)
 
@@ -125,7 +125,7 @@ class Evolution:
         return self.ws.runs / f"iter_{k:03d}"
 
     # ----- stages ------------------------------------------------------------------
-    def _train_outcomes(self, k: int) -> Dict[str, Outcome]:
+    def _train_outcomes(self, k: int) -> dict[str, Outcome]:
         """Rollout stage: score the training split and freeze it in the Raw Layer."""
         raw = self.ws.raw_dir(k)
         if raw.is_dir():
@@ -139,7 +139,7 @@ class Evolution:
         log.info("  train score %.4f", mean(outcomes))
         return outcomes
 
-    def _maintain(self, k: int, outcomes: Dict[str, Outcome]) -> None:
+    def _maintain(self, k: int, outcomes: dict[str, Outcome]) -> None:
         backup = self._iter_dir(k) / "wiki_before_maintainer"
         if backup.is_dir():  # an earlier attempt stopped mid-way: start from the same wiki
             shutil.rmtree(self.ws.wiki)
@@ -152,7 +152,7 @@ class Evolution:
         warnings = run_maintainer(self.backend, self.ws, k, traces, load_skills(self.ws.skills))
         log.info("  wiki updated from %d traces (%d skipped edits)", len(traces), len(warnings))
 
-    def _validate(self, k: int, r_best: float) -> Dict[str, Any]:
+    def _validate(self, k: int, r_best: float) -> dict[str, Any]:
         """Build S'_k = Apply(S_{k-1}, P_k) and score it on the validation split."""
         proposal = read_json(self._iter_dir(k) / "proposal.json")
         pending = {"proposal": proposal, "target": proposal.get("name"), "diff": "", "score": None,
@@ -171,7 +171,7 @@ class Evolution:
         pending["accepted"] = pending["score"] > r_best  # strict improvement (Eq. 4)
         return pending
 
-    def _commit(self, state: Dict[str, Any]) -> None:
+    def _commit(self, state: dict[str, Any]) -> None:
         """Gate: accept or roll back skills; the wiki is kept either way."""
         k, pending = state["iteration"], state["pending"]
         marker = self._iter_dir(k) / "skills_swapped"
@@ -193,8 +193,8 @@ class Evolution:
         state.update(iteration=k + 1, stage="rollout", pending=None)
         self.ws.save_state(state)
 
-    def _score_split(self, split: str, skills: List[Tuple[str, str]], label: str,
-                     stage_dir: Path) -> Dict[str, Outcome]:
+    def _score_split(self, split: str, skills: list[tuple[str, str]], label: str,
+                     stage_dir: Path) -> dict[str, Outcome]:
         tasks = self.suite.split(split)
         results = run_tasks(self.backend, self.suite, tasks, skills, stage_dir, self.opts.workers)
         return self.scorer.score_all(tasks, results, self.ws.reviews / f"{label}.csv")
@@ -209,11 +209,11 @@ def _copy_atomic(src: Path, dst: Path) -> None:
     staging.rename(dst)
 
 
-def task_fingerprint(suite: Suite) -> Dict[str, List[str]]:
+def task_fingerprint(suite: Suite) -> dict[str, list[str]]:
     return {split: sorted(t.id for t in suite.split(split)) for split in ("train", "val")}
 
 
-def _note_purpose(skill_dir: Path, k: int, pending: Dict[str, Any]) -> None:
+def _note_purpose(skill_dir: Path, k: int, pending: dict[str, Any]) -> None:
     """Record the gating result in PURPOSE.md's Evolution History (the proposer writes it before gating)."""
     action = pending["proposal"].get("action")
     append_text(skill_dir / "PURPOSE.md",
@@ -221,7 +221,7 @@ def _note_purpose(skill_dir: Path, k: int, pending: Dict[str, Any]) -> None:
                 f"({pending['r_best_before']:.4f} -> {pending['score']:.4f}).\n")
 
 
-def _record_skill_impact(ws: Workspace, k: int, pending: Dict[str, Any]) -> None:
+def _record_skill_impact(ws: Workspace, k: int, pending: dict[str, Any]) -> None:
     """Programmatic audit trail W_k <- Update(W'_k, P_k, R(T_val,k), a_k) (paper §3.2.4)."""
     header = f"## Iteration {k} "
     path = ws.wiki / "skill-impact.md"

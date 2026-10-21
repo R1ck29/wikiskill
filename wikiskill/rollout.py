@@ -14,7 +14,7 @@ import tempfile
 from concurrent.futures import FIRST_EXCEPTION, ThreadPoolExecutor, wait
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from .backends import kill_all_running, reset_stop
 from .config import Suite, Task
@@ -37,12 +37,12 @@ class RolloutResult:
     ok: bool
     error: str
     workdir: str
-    files: Tuple[str, ...]
+    files: tuple[str, ...]
     trace: str = ""
     infra_error: bool = False
 
 
-def system_prompt(suite: Suite, skills: List[Tuple[str, str]]) -> str:
+def system_prompt(suite: Suite, skills: list[tuple[str, str]]) -> str:
     return suite.system_prompt.replace("{skill_section}", render_skill_section(skills))
 
 
@@ -102,11 +102,11 @@ def run_task(backend: Any, suite: Suite, task: Task, system: str, out_dir: Path)
     return result
 
 
-def run_tasks(backend: Any, suite: Suite, tasks: List[Task], skills: List[Tuple[str, str]],
-              stage_dir: Path, workers: int) -> Dict[str, RolloutResult]:
+def run_tasks(backend: Any, suite: Suite, tasks: list[Task], skills: list[tuple[str, str]],
+              stage_dir: Path, workers: int) -> dict[str, RolloutResult]:
     """Run tasks in parallel; returns {task_id: result} in task order."""
     system = system_prompt(suite, skills)
-    done: Dict[str, RolloutResult] = {}
+    done: dict[str, RolloutResult] = {}
 
     def one(task: Task) -> RolloutResult:
         result = run_task(backend, suite, task, system, stage_dir / task.id)

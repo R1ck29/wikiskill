@@ -1,9 +1,9 @@
 """Learning from real usage: `feedback` (pending queue) and `improve` (generations)."""
+import contextlib
 import json
 import re
 import unittest
 from pathlib import Path
-
 from unittest import mock
 
 from tests.fakes import FakeBackend, TempDirTest
@@ -11,8 +11,7 @@ from tests.test_cli import run_cli
 from tests.test_evolve import write_suite
 from wikiskill.config import load_suite
 from wikiskill.evolve import is_done
-from wikiskill.improve import (FEEDBACK, MERGED, generations, merge_pending, pending,
-                               prepare_generation)
+from wikiskill.improve import FEEDBACK, MERGED, generations, merge_pending, pending, prepare_generation
 from wikiskill.skills import EXPORT_MARK
 from wikiskill.util import read_text
 from wikiskill.workspace import Workspace
@@ -36,10 +35,8 @@ class FeedbackTest(TempDirTest):
 
     def reserved(self):
         path = self.root / "con.csv"
-        try:
+        with contextlib.suppress(OSError):  # Windows refuses the name: a missing file is rejected just the same
             path.write_text("x", encoding="utf-8")
-        except OSError:  # Windows itself refuses the name: a missing file is rejected just the same
-            pass
         return path
 
     def test_good_result_becomes_the_answer_and_files_are_copied(self):

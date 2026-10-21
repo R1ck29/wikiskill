@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 from .config import Suite
 from .rollout import run_tasks
@@ -20,7 +20,7 @@ from .util import backup_once, read_text, write_text
 COLUMNS = ["task_id", "verdict", "corrected_answer", "rubric_note", "prompt", "agent_answer", "output_dir"]
 
 
-def collect(suite: Suite, backend: Any, splits: List[str], out_dir: Path, workers: int) -> Path:
+def collect(suite: Suite, backend: Any, splits: list[str], out_dir: Path, workers: int) -> Path:
     tasks = [t for t in suite.tasks if t.split in splits]
     if not tasks:
         raise ValueError(f"no tasks in splits {splits}")
@@ -34,7 +34,7 @@ def collect(suite: Suite, backend: Any, splits: List[str], out_dir: Path, worker
     return sheet
 
 
-def apply_sheet(suite: Suite, sheet: Path) -> Dict[str, int]:
+def apply_sheet(suite: Suite, sheet: Path) -> dict[str, int]:
     """Merge reviewed references into the suite's tasks file. Returns counts per change type."""
     rows = {strip_id(r.get("task_id", "")): r for r in read_review_rows(sheet)}
     counts = {"answer_from_ok": 0, "answer_from_correction": 0, "rubric_added": 0, "ng_without_correction": 0}
@@ -52,7 +52,7 @@ def apply_sheet(suite: Suite, sheet: Path) -> Dict[str, int]:
     return counts
 
 
-def _apply_row(task: Dict[str, Any], row: Dict[str, str], counts: Dict[str, int]) -> None:
+def _apply_row(task: dict[str, Any], row: dict[str, str], counts: dict[str, int]) -> None:
     verdict = parse_verdict(row.get("verdict") or "")
     correction = (row.get("corrected_answer") or "").strip()
     note = (row.get("rubric_note") or "").strip()

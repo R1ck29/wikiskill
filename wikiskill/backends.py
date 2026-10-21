@@ -17,18 +17,19 @@ flags appear on the command line (Windows limits command lines to 32k chars and
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import re
 import shutil
 import signal
-import re
 import subprocess
 import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable
 
 from .config import ConfigError
 from .util import read_json
@@ -37,7 +38,7 @@ log = logging.getLogger(__name__)
 
 # Defaults verified with claude 2.1.295 and codex-cli 0.146.1. Override them with
 # a backend config file (see docs/CONFIGURATION.md) if your CLI version differs.
-DEFAULTS: Dict[str, Dict[str, object]] = {
+DEFAULTS: dict[str, dict[str, object]] = {
     "claude": {
         "command": "claude",
         "model_flag": "--model",
@@ -85,17 +86,17 @@ class AgentResult:
 class BackendConfig:
     kind: str
     command: str
-    model: Optional[str] = None
+    model: str | None = None
     model_flag: str = "--model"
-    complete_args: Tuple[str, ...] = ()
-    agent_args: Tuple[str, ...] = ()
+    complete_args: tuple[str, ...] = ()
+    agent_args: tuple[str, ...] = ()
     timeout: int = 1800
     retries: int = 2
     retry_wait: float = 10.0
 
 
-def load_backend_config(kind: str, model: Optional[str] = None,
-                        config_path: Optional[Path] = None) -> BackendConfig:
+def load_backend_config(kind: str, model: str | None = None,
+                        config_path: Path | None = None) -> BackendConfig:
     """Built-in defaults for `kind`, overridden by the `kind` section of a JSON config file."""
     if kind not in DEFAULTS:
         raise ConfigError(f"unknown backend {kind!r}; choose from {sorted(DEFAULTS)}")
@@ -126,12 +127,12 @@ class CLIBackend:
     def name(self) -> str:
         return f"{self.config.kind}:{self.config.model or 'default-model'}"
 
-    def complete(self, prompt: str, system: Optional[str] = None) -> str:
+    def complete(self, prompt: str, system: str | None = None) -> str:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
             args, stdin = self._complete_args(prompt, system, Path(tmp))
             return self._retry(lambda: self._parse_complete(self._run(args, stdin, Path(tmp))))
 
-    def run_agent(self, prompt: str, system: Optional[str], cwd: Path) -> AgentResult:
+    def run_agent(self, prompt: str, system: str | None, cwd: Path) -> AgentResult:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
             args, stdin = self._agent_args(prompt, system, Path(cwd), Path(tmp))
             try:
@@ -140,7 +141,7 @@ class CLIBackend:
                 return AgentResult("", f"(agent run failed: {e})", ok=False, error=str(e), infra_error=True)
 
     # ----- subprocess ----------------------------------------------------------
-    def _run(self, args: List[str], stdin: str, cwd: Path) -> str:
+    def _run(self, args: list[str], stdin: str, cwd: Path) -> str:
         exe = shutil.which(self.config.command)
         if not exe:
             raise BackendError(f"command {self.config.command!r} not found on PATH")
@@ -163,14 +164,14 @@ class CLIBackend:
                 if _STOP.wait(self.config.retry_wait * attempt):  # wakes early on Ctrl+C
                     raise StoppedError("stopped by the user") from e
 
-    def _model_args(self) -> List[str]:
+    def _model_args(self) -> list[str]:
         return [self.config.model_flag, self.config.model] if self.config.model else []
 
     # ----- implemented by subclasses ---------------------------------------------------
-    def _complete_args(self, prompt: str, system: Optional[str], tmp: Path) -> Tuple[List[str], str]:
+    def _complete_args(self, prompt: str, system: str | None, tmp: Path) -> tuple[list[str], str]:
         raise NotImplementedError
 
-    def _agent_args(self, prompt: str, system: Optional[str], cwd: Path, tmp: Path) -> Tuple[List[str], str]:
+    def _agent_args(self, prompt: str, system: str | None, cwd: Path, tmp: Path) -> tuple[list[str], str]:
         raise NotImplementedError
 
     def _parse_complete(self, stdout: str) -> str:
@@ -180,7 +181,7 @@ class CLIBackend:
         raise NotImplementedError
 
 
-def run_process(argv: List[str], stdin: str, cwd: Path, timeout: float) -> Tuple[Optional[int], str, str]:
+def run_process(argv: list[str], stdin: str, cwd: Path, timeout: float) -> tuple[int | None, str, str]:
     """Run a command; on timeout kill its whole process tree. Returns (returncode or None, stdout, stderr).
 
     npm-installed CLIs are .cmd shims (Windows) or wrapper scripts, so killing only the
@@ -199,20 +200,16 @@ def run_process(argv: List[str], stdin: str, cwd: Path, timeout: float) -> Tuple
         return proc.returncode, stdout, stderr
     except subprocess.TimeoutExpired:
         _kill_tree(proc)
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             proc.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            pass
         return None, "", ""
     except BaseException:  # Ctrl+C or any error: the CLI runs in its own group, so stop it explicitly
         _kill_tree(proc)
         for stream in (proc.stdin, proc.stdout, proc.stderr):
             if stream:
                 stream.close()
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            pass
         raise
     finally:
         with _LIVE_LOCK:
@@ -250,10 +247,10 @@ def _write_prompt_file(tmp: Path, name: str, text: str) -> str:
     return str(path)
 
 
-def _json_lines(stdout: str) -> List[dict]:
+def _json_lines(stdout: str) -> list[dict]:
     events = []
-    for line in stdout.splitlines():
-        line = line.strip()
+    for raw in stdout.splitlines():
+        line = raw.strip()
         if line.startswith("{"):
             try:
                 events.append(json.loads(line))
@@ -355,7 +352,7 @@ class CodexBackend(CLIBackend):
         return AgentResult(messages[-1] if messages else "", trace, ok=True)
 
 
-def _join(system: Optional[str], prompt: str) -> str:
+def _join(system: str | None, prompt: str) -> str:
     return f"{system.strip()}\n\n---\n\n{prompt}" if system else prompt
 
 
@@ -377,6 +374,6 @@ def _render_codex_item(item: dict) -> str:
 BACKENDS = {"claude": ClaudeBackend, "codex": CodexBackend}
 
 
-def make_backend(kind: str, model: Optional[str] = None, config_path: Optional[Path] = None) -> CLIBackend:
+def make_backend(kind: str, model: str | None = None, config_path: Path | None = None) -> CLIBackend:
     return BACKENDS[kind](load_backend_config(kind, model, config_path))
 

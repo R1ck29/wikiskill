@@ -9,7 +9,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any
 
 from .util import is_windows_reserved, read_json, read_text
 
@@ -29,8 +29,8 @@ class Task:
     split: str
     prompt: str
     answer: Any = None
-    files: Tuple[str, ...] = ()
-    rubric: Optional[str] = None
+    files: tuple[str, ...] = ()
+    rubric: str | None = None
 
 
 @dataclass(frozen=True)
@@ -44,14 +44,14 @@ class Suite:
     human_review: bool
     tasks_path: Path
     files_dir: Path
-    tasks: Tuple[Task, ...]
+    tasks: tuple[Task, ...]
 
-    def split(self, name: str) -> List[Task]:
+    def split(self, name: str) -> list[Task]:
         return [t for t in self.tasks if t.split == name]
 
 
 def load_suite(
-    path: Path, require_answers: bool = True, human_review: Optional[bool] = None
+    path: Path, require_answers: bool = True, human_review: bool | None = None
 ) -> Suite:
     """Load `suite.json` (or a directory containing it) and validate everything.
 
@@ -90,7 +90,7 @@ def load_suite(
     )
 
 
-def load_tasks(tasks_path: Path, files_dir: Path, scorer_type: Optional[str]) -> Tuple[Task, ...]:
+def load_tasks(tasks_path: Path, files_dir: Path, scorer_type: str | None) -> tuple[Task, ...]:
     """Parse the JSONL tasks file; `scorer_type=None` skips the answer-presence check."""
     if not tasks_path.is_file():
         raise ConfigError(f"tasks file not found: {tasks_path}")
@@ -112,7 +112,7 @@ def load_tasks(tasks_path: Path, files_dir: Path, scorer_type: Optional[str]) ->
     return tuple(tasks)
 
 
-def _parse_task(row: Any, where: str, files_dir: Path, scorer_type: Optional[str]) -> Task:
+def _parse_task(row: Any, where: str, files_dir: Path, scorer_type: str | None) -> Task:
     if not isinstance(row, dict):
         raise ConfigError(f"{where}: each line must be a JSON object")
     task_id = str(row.get("id", ""))

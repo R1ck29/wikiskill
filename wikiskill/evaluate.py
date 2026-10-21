@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import random
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .config import Suite
 from .rollout import run_tasks
@@ -20,8 +20,8 @@ from .util import read_json, write_json
 log = logging.getLogger(__name__)
 
 
-def evaluate(suite: Suite, backend: Any, skills_dir: Optional[Path], split: str, out_dir: Path,
-             workers: int, judge: Any = None) -> Dict[str, Any]:
+def evaluate(suite: Suite, backend: Any, skills_dir: Path | None, split: str, out_dir: Path,
+             workers: int, judge: Any = None) -> dict[str, Any]:
     """Run `split` with the skills in `skills_dir` (None = no skills) and write report.json."""
     tasks = suite.split(split)
     if not tasks:
@@ -40,15 +40,15 @@ def evaluate(suite: Suite, backend: Any, skills_dir: Optional[Path], split: str,
     return report
 
 
-def paired_bootstrap(a: Dict[str, float], b: Dict[str, float], iterations: int = 1000,
-                     seed: int = 0) -> Dict[str, Any]:
+def paired_bootstrap(a: dict[str, float], b: dict[str, float], iterations: int = 1000,
+                     seed: int = 0) -> dict[str, Any]:
     """Compare per-task scores of two reports on their shared tasks (b minus a)."""
     if iterations < 1:
         raise ValueError("iterations must be at least 1")
     shared = sorted(set(a) & set(b))
     if not shared:
         raise ValueError("the two reports share no task ids")
-    pairs: List[Tuple[float, float]] = [(a[t], b[t]) for t in shared]
+    pairs: list[tuple[float, float]] = [(a[t], b[t]) for t in shared]
     observed = sum(y - x for x, y in pairs) / len(pairs)
     rng = random.Random(seed)
     diffs = []
@@ -68,5 +68,5 @@ def paired_bootstrap(a: Dict[str, float], b: Dict[str, float], iterations: int =
     }
 
 
-def compare_reports(path_a: Path, path_b: Path, iterations: int = 1000, seed: int = 0) -> Dict[str, Any]:
+def compare_reports(path_a: Path, path_b: Path, iterations: int = 1000, seed: int = 0) -> dict[str, Any]:
     return paired_bootstrap(read_json(path_a)["scores"], read_json(path_b)["scores"], iterations, seed)

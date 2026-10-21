@@ -12,8 +12,9 @@ import re
 import secrets
 import shutil
 import time
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 from .config import ANSWER_REQUIRED, ConfigError, Suite
 from .evolve import is_done
@@ -28,15 +29,15 @@ STAGING = "gen-next"  # a generation is prepared here, then renamed to gen-NNN
 MIN_NEW = 3  # pending feedback rows that start a new generation (improve --min-new default)
 
 
-def feedback_row(scorer_type: str, prompt: str, verdict: str, output: Optional[str] = None,
-                 correct: Optional[str] = None, note: Optional[str] = None) -> Dict[str, Any]:
+def feedback_row(scorer_type: str, prompt: str, verdict: str, output: str | None = None,
+                 correct: str | None = None, note: str | None = None) -> dict[str, Any]:
     """Build the task fields (without id/files/split) for one judged real result."""
     if not prompt.strip():
         raise ConfigError("feedback needs the request text (--prompt)")
     if verdict == "good":
         if not output:
             raise ConfigError("a 'good' verdict needs the accepted result (--output)")
-        row: Dict[str, Any] = {"prompt": prompt, "answer": output}
+        row: dict[str, Any] = {"prompt": prompt, "answer": output}
     elif verdict == "bad" and correct:
         row = {"prompt": prompt, "answer": correct}
     elif verdict == "bad":
@@ -53,9 +54,9 @@ def feedback_row(scorer_type: str, prompt: str, verdict: str, output: Optional[s
     return row
 
 
-def record_feedback(suite: Suite, prompt: str, verdict: str, output: Optional[str] = None,
-                    correct: Optional[str] = None, note: Optional[str] = None,
-                    files: Sequence[Path] = ()) -> Tuple[str, int]:
+def record_feedback(suite: Suite, prompt: str, verdict: str, output: str | None = None,
+                    correct: str | None = None, note: str | None = None,
+                    files: Sequence[Path] = ()) -> tuple[str, int]:
     """Append one row to the pending queue; return (task id, number of pending rows)."""
     row = feedback_row(suite.scorer["type"], prompt, verdict, output, correct, note)
     paths = [Path(f) for f in files]
@@ -80,23 +81,23 @@ def record_feedback(suite: Suite, prompt: str, verdict: str, output: Optional[st
     return task_id, len(pending(suite.root))
 
 
-def pending(suite_root: Path) -> List[Dict[str, Any]]:
+def pending(suite_root: Path) -> list[dict[str, Any]]:
     """Feedback rows not yet merged into the tasks file."""
     path = Path(suite_root) / FEEDBACK
     return _rows(read_text(path)) if path.is_file() else []
 
 
-def _rows(text: str) -> List[Dict[str, Any]]:
+def _rows(text: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
 # ----- improve: generations ----------------------------------------------------------
-def generations(root: Path) -> List[Path]:
+def generations(root: Path) -> list[Path]:
     return sorted(p for p in Path(root).glob("gen-[0-9][0-9][0-9]") if p.is_dir())
 
 
 def prepare_generation(suite_root: Path, tasks_path: Path, root: Path, iterations: int,
-                       min_new: int) -> Tuple[Optional[Workspace], int]:
+                       min_new: int) -> tuple[Workspace | None, int]:
     """Pick the workspace `improve` should evolve: (workspace or None if nothing to do, merged rows).
 
     An unfinished generation is resumed as is. Otherwise a new generation is started from the
@@ -145,7 +146,7 @@ def merge_pending(suite_root: Path, tasks_path: Path) -> int:
     return len(new)
 
 
-def export_skills(skills_dir: Path, dest: Path, suite_root: Path) -> List[str]:
+def export_skills(skills_dir: Path, dest: Path, suite_root: Path) -> list[str]:
     """Copy skills to `dest` with a footer that routes users' judgements back as feedback.
 
     Only files exported by wikiskill before (`export` or this function) are overwritten.

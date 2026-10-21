@@ -1,0 +1,12 @@
+target-version = "py39"
+line-length = 120
+
+[lint]
+# pinned rule families, so results do not drift with ruff releases (CI runs ruff 0.17.1)
+select = ["E4", "E7", "E9", "F", "I", "UP", "SIM", "FA", "PLW", "BLE", "TRY", "FURB"]
+# errors carry their full message at the raise site; that is the style of this code base
+ignore = ["TRY003", "TRY300"]
+
+[lint.per-file-ignores]
+# the launcher must start on an old Python and re-run itself with a newer one, so it keeps 3.6-compatible syntax
+"skills/wikiskill/scripts/run_wikiskill.py" = ["FA100", "UP"]

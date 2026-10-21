@@ -90,9 +90,8 @@ class RolloutTest(unittest.TestCase):
         def interrupted(cwd):
             raise KeyboardInterrupt
 
-        with mock.patch("wikiskill.rollout.kill_all_running") as kill_all:
-            with self.assertRaises(KeyboardInterrupt):
-                run_tasks(ScriptedAgent(interrupted), self.suite, [self.task], [], self.root / "stage", workers=2)
+        with mock.patch("wikiskill.rollout.kill_all_running") as kill_all, self.assertRaises(KeyboardInterrupt):
+            run_tasks(ScriptedAgent(interrupted), self.suite, [self.task], [], self.root / "stage", workers=2)
         kill_all.assert_called_once()
 
     @unittest.skipIf(os.name == "nt", "creating symlinks needs extra rights on Windows")

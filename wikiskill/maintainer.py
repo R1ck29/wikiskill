@@ -9,7 +9,7 @@ import logging
 import random
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from .patching import PatchError, apply_edits
 from .scoring import Outcome
@@ -27,7 +27,7 @@ class MaintainerError(RuntimeError):
     """The model never returned usable wiki edits."""
 
 
-def sample_traces(outcomes: Dict[str, Outcome], seed: int) -> List[str]:
+def sample_traces(outcomes: dict[str, Outcome], seed: int) -> list[str]:
     """Stratified sample: up to 5 failing and up to 3 passing traces (Appendix C)."""
     rng = random.Random(seed)
     failing = sorted(t for t, o in outcomes.items() if not o.passed)
@@ -43,8 +43,8 @@ def wiki_context(ws: Workspace) -> str:
     return "\n\n".join(parts)
 
 
-def build_prompt(ws: Workspace, iteration: int, traces: Dict[str, str],
-                 skills: List[Tuple[str, str]]) -> str:
+def build_prompt(ws: Workspace, iteration: int, traces: dict[str, str],
+                 skills: list[tuple[str, str]]) -> str:
     skill_text = "\n\n".join(f"### skills/{n}/SKILL.md\n{t}" for n, t in skills) or "(no active skills yet)"
     trace_text = "\n\n".join(
         f"### Trace {task_id}\n{truncate(text, TRACE_CHARS)}" for task_id, text in traces.items()
@@ -56,8 +56,8 @@ def build_prompt(ws: Workspace, iteration: int, traces: Dict[str, str],
     )
 
 
-def run_maintainer(backend: Any, ws: Workspace, iteration: int, traces: Dict[str, str],
-                   skills: List[Tuple[str, str]], attempts: int = 3) -> List[str]:
+def run_maintainer(backend: Any, ws: Workspace, iteration: int, traces: dict[str, str],
+                   skills: list[tuple[str, str]], attempts: int = 3) -> list[str]:
     """Ask the model for wiki edits and apply them. Returns warnings about skipped edits."""
     prompt = build_prompt(ws, iteration, traces, skills)
     error = ""
@@ -74,16 +74,16 @@ def run_maintainer(backend: Any, ws: Workspace, iteration: int, traces: Dict[str
     raise MaintainerError(f"wiki maintainer gave no usable JSON after {attempts} attempts; run again to retry")
 
 
-def _check_required(data: Dict[str, Any]) -> None:
+def _check_required(data: dict[str, Any]) -> None:
     for key in ("update_index", "append_log"):
         if not isinstance(data.get(key), str) or not data[key].strip():
             raise ValueError(f"'{key}' is required and must be a non-empty string")
     for key in ("create_patterns", "update_patterns"):
         if not isinstance(data.get(key, []), list):
-            raise ValueError(f"'{key}' must be a list")
+            raise ValueError(f"'{key}' must be a list")  # noqa: TRY004 -- callers retry on ValueError
 
 
-def apply_output(ws: Workspace, iteration: int, data: Dict[str, Any]) -> List[str]:
+def apply_output(ws: Workspace, iteration: int, data: dict[str, Any]) -> list[str]:
     """Apply create/update/index/log edits; a bad entry is skipped and reported, never fatal."""
     patterns, warnings = ws.wiki / "patterns", []
     for entry in data.get("create_patterns", []):
@@ -115,7 +115,7 @@ def apply_output(ws: Workspace, iteration: int, data: Dict[str, Any]) -> List[st
     return warnings
 
 
-def _pattern_name(entry: Any, warnings: List[str]) -> Any:
+def _pattern_name(entry: Any, warnings: list[str]) -> Any:
     name = entry.get("name") if isinstance(entry, dict) else None
     if isinstance(name, str) and name.startswith("wiki/patterns/"):
         name = name[len("wiki/patterns/"):]

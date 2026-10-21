@@ -34,7 +34,8 @@ def main() -> int:
         exe = newer_python()
         if exe:
             env = dict(os.environ, WIKISKILL_REEXEC="1")
-            return subprocess.run([exe, str(Path(__file__).resolve()), *sys.argv[1:]], env=env).returncode
+            command = [exe, str(Path(__file__).resolve()), *sys.argv[1:]]
+            return subprocess.run(command, env=env, check=False).returncode
     skill_dir = Path(__file__).resolve().parent.parent
     root = find_package_root(skill_dir)
     if root is None:

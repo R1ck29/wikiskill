@@ -7,11 +7,12 @@
 The copy holds SKILL.md, the launcher, the `wikiskill` package, docs/ and examples/, so it works
 without this repository (unzip the repository ZIP anywhere, run this once, then delete the ZIP folder).
 """
+from __future__ import annotations
+
 import argparse
 import shutil
 import sys
 from pathlib import Path
-from typing import List, Optional
 
 REPO = Path(__file__).resolve().parent.parent
 SKILL_NAME = "wikiskill"
@@ -48,7 +49,7 @@ def integrate(target: Path, skills_dir: bool = False, force: bool = False) -> Pa
     return dest
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("target", type=Path, help="plugin folder (or skills folder with --skills-dir)")
     parser.add_argument("--skills-dir", action="store_true", help="target is a skills folder, not a plugin")

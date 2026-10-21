@@ -144,6 +144,7 @@ class FailureTest(FakeCLITestCase):
         """Reviewer scenario: retries must not restart CLIs after Ctrl+C, and no process may survive."""
         import _thread
         import threading
+
         from wikiskill import backends
         from wikiskill.config import Suite, Task
         from wikiskill.rollout import run_tasks
@@ -155,9 +156,8 @@ class FailureTest(FakeCLITestCase):
         tasks = [Task(f"t{i}", "train", "q", answer="1") for i in range(3)]
         threading.Timer(2.0, _thread.interrupt_main).start()  # what a terminal Ctrl+C does
         started = time.monotonic()
-        with mock.patch.dict(os.environ, {"FAKE_CLI_HANG": "1"}):
-            with self.assertRaises(KeyboardInterrupt):
-                run_tasks(backend, suite, tasks, [], root / "stage", workers=3)
+        with mock.patch.dict(os.environ, {"FAKE_CLI_HANG": "1"}), self.assertRaises(KeyboardInterrupt):
+            run_tasks(backend, suite, tasks, [], root / "stage", workers=3)
         self.assertLess(time.monotonic() - started, 30)  # no 10 s retry waits, no 60 s hangs
         self.assertEqual(len(self.calls()), 3)  # each task started once; nothing was restarted
         self.assertEqual(backends._LIVE, set())  # every CLI was stopped before returning
@@ -175,9 +175,9 @@ class FailureTest(FakeCLITestCase):
             return real_communicate(self, *a, **kw)
 
         with mock.patch.object(backends.subprocess.Popen, "communicate", interrupting_communicate), \
-                mock.patch.object(backends, "_kill_tree", lambda proc: (killed.append(proc.pid), real_kill(proc))):
-            with self.assertRaises(KeyboardInterrupt):
-                backends.run_process([sys.executable, "-c", "import time; time.sleep(60)"], "", self.workdir, 30)
+                mock.patch.object(backends, "_kill_tree", lambda proc: (killed.append(proc.pid), real_kill(proc))), \
+                self.assertRaises(KeyboardInterrupt):
+            backends.run_process([sys.executable, "-c", "import time; time.sleep(60)"], "", self.workdir, 30)
         self.assertEqual(len(killed), 1)
 
     def test_unknown_config_keys_rejected(self):

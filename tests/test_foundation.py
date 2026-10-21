@@ -211,10 +211,8 @@ class WorkspaceTest(unittest.TestCase):
                 ws.write_raw(1, {"t1": "other"}, {})
             with self.assertRaises(ValueError):
                 ws.write_raw(2, {"A": "upper", "a": "lower"}, {})
-            with ws.lock():
-                with self.assertRaises(RuntimeError):  # a second run on the same workspace is refused
-                    with ws.lock():
-                        pass
+            with ws.lock(), self.assertRaises(RuntimeError), ws.lock():  # a second run on the same workspace is refused
+                pass
             self.assertFalse((ws.root / "evolve.lock").exists())
             with ws.lock():
                 (ws.root / "evolve.lock").unlink()  # removed by hand during the run: still exits cleanly

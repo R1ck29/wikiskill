@@ -5,8 +5,16 @@ from pathlib import Path
 
 from wikiskill.config import Suite, Task
 from wikiskill.rollout import RolloutResult
-from wikiskill.scoring import (HumanReviewPending, Scorer, extract_answer, parse_number, parse_verdict,
-                               read_review_rows, read_review_sheet, write_review_sheet)
+from wikiskill.scoring import (
+    HumanReviewPending,
+    Scorer,
+    extract_answer,
+    parse_number,
+    parse_verdict,
+    read_review_rows,
+    read_review_sheet,
+    write_review_sheet,
+)
 
 
 def make_suite(root: Path, scorer: dict, human: bool = False) -> Suite:

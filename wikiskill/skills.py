@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import shutil
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable
 
 from .patching import PatchError, apply_edits, unified_diff
 from .util import is_windows_reserved, read_text, write_text
@@ -69,7 +69,7 @@ def validate_skill_md(name: str, text: str) -> None:
         raise SkillError(f"frontmatter description must be 1-{MAX_DESCRIPTION} characters")
 
 
-def load_skills(skills_dir: Path) -> List[Tuple[str, str]]:
+def load_skills(skills_dir: Path) -> list[tuple[str, str]]:
     """Return [(name, SKILL.md text)] sorted by name."""
     skills_dir = Path(skills_dir)
     if not skills_dir.is_dir():
@@ -82,7 +82,7 @@ def load_skills(skills_dir: Path) -> List[Tuple[str, str]]:
 
 
 def copy_skills(skills_dir: Path, dest: Path, may_overwrite: Callable[[Path], bool],
-                footer: str = "") -> List[Tuple[str, Path, bool]]:
+                footer: str = "") -> list[tuple[str, Path, bool]]:
     """Copy each SKILL.md to dest/<name>/SKILL.md (plus EXPORT_MARK and `footer`); return (name, target, written)."""
     copied = []
     for name, text in load_skills(skills_dir):
@@ -100,7 +100,7 @@ def exported_by_wikiskill(target: Path) -> bool:
     return EXPORT_MARK in read_text(target)
 
 
-def render_skill_section(skills: List[Tuple[str, str]]) -> str:
+def render_skill_section(skills: list[tuple[str, str]]) -> str:
     """Full injection of every active skill into the system prompt (paper §3.2.1)."""
     if not skills:
         return ""
@@ -112,7 +112,7 @@ def render_skill_section(skills: List[Tuple[str, str]]) -> str:
     )
 
 
-def apply_proposal(src: Path, proposal: dict, dst: Path) -> Tuple[str, str]:
+def apply_proposal(src: Path, proposal: dict, dst: Path) -> tuple[str, str]:
     """Copy skill set `src` to `dst` and apply a create/patch proposal there.
 
     Returns (target skill name, unified diff). Raises SkillError if the proposal is invalid;
@@ -132,10 +132,7 @@ def apply_proposal(src: Path, proposal: dict, dst: Path) -> Tuple[str, str]:
         dst.mkdir(parents=True)
     skill_dir = dst / name
     old = read_text(skill_dir / "SKILL.md") if (skill_dir / "SKILL.md").is_file() else None
-    if action == "create":
-        new = _create(skill_dir, name, proposal)
-    else:
-        new = _patch(skill_dir, name, proposal, old)
+    new = _create(skill_dir, name, proposal) if action == "create" else _patch(skill_dir, name, proposal, old)
     return name, unified_diff(old or "", new, f"{name}/SKILL.md", is_new=old is None)
 
 
@@ -149,7 +146,7 @@ def _create(skill_dir: Path, name: str, proposal: dict) -> str:
     return skill_md
 
 
-def _patch(skill_dir: Path, name: str, proposal: dict, old: Optional[str]) -> str:
+def _patch(skill_dir: Path, name: str, proposal: dict, old: str | None) -> str:
     if old is None:
         raise SkillError(f"cannot patch unknown skill {name!r}; use action 'create'")
     try:

@@ -6,7 +6,7 @@ from pathlib import Path
 from tests.fakes import FakeBackend
 from wikiskill.config import load_suite
 from wikiskill.evaluate import evaluate, paired_bootstrap
-from wikiskill.evolve import EvolveOptions, Evolution
+from wikiskill.evolve import Evolution, EvolveOptions
 from wikiskill.review import apply_sheet, collect
 from wikiskill.scoring import HumanReviewPending, read_review_rows, write_review_sheet
 from wikiskill.workspace import Workspace
@@ -139,9 +139,8 @@ class EvolveLoopTest(unittest.TestCase):
             return real_copytree(src, dst, *a, **kw)
 
         from unittest import mock
-        with mock.patch("wikiskill.evolve.shutil.copytree", crash_on_swap):
-            with self.assertRaises(KeyboardInterrupt):
-                evo.run()
+        with mock.patch("wikiskill.evolve.shutil.copytree", crash_on_swap), self.assertRaises(KeyboardInterrupt):
+            evo.run()
         state = Evolution(suite, FakeBackend(), ws, self.opts).run()
         self.assertEqual([h["outcome"] for h in state["history"]], ["rejected", "accepted"])
         self.assertTrue((ws.skills / "report-total" / "SKILL.md").is_file())
@@ -186,7 +185,7 @@ class EvolveLoopTest(unittest.TestCase):
 
     def test_needs_train_and_val(self):
         suite_dir = write_suite(self.root / "suite")
-        lines = [l for l in (suite_dir / "tasks.jsonl").read_text(encoding="utf-8").splitlines() if '"val"' not in l]
+        lines = [x for x in (suite_dir / "tasks.jsonl").read_text(encoding="utf-8").splitlines() if '"val"' not in x]
         (suite_dir / "tasks.jsonl").write_text("\n".join(lines), encoding="utf-8")
         with self.assertRaises(ValueError):
             Evolution(load_suite(suite_dir), FakeBackend(), Workspace(self.root / "ws"), self.opts)

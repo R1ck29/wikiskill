@@ -17,7 +17,7 @@ LAUNCHER = SKILL / "scripts" / "run_wikiskill.py"
 
 def run(*argv, cwd=None):
     return subprocess.run([sys.executable, *map(str, argv)], cwd=cwd, capture_output=True, text=True,
-                          encoding="utf-8", timeout=120)
+                          encoding="utf-8", timeout=120, check=False)
 
 
 class LauncherTest(TempDirTest):

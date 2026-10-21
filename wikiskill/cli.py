@@ -9,14 +9,15 @@ import platform
 import shutil
 import sys
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator, List, Optional
+from typing import Any
 
 from . import __version__
 from .backends import make_backend
 from .config import ConfigError, load_suite
 from .evaluate import compare_reports, evaluate
-from .evolve import EvolveOptions, Evolution
+from .evolve import Evolution, EvolveOptions
 from .improve import MIN_NEW, export_skills, generations, pending, prepare_generation, record_feedback
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
@@ -30,7 +31,7 @@ EXAMPLES = {p.name: p for p in (Path(__file__).resolve().parent.parent / "exampl
 EXIT_ERROR, EXIT_CONFIG, EXIT_REVIEW = 1, 2, 3
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # Windows consoles may not be UTF-8
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
@@ -196,7 +197,7 @@ def _suite(args: argparse.Namespace, require_answers: bool = True):
 # ----- commands --------------------------------------------------------------------
 def cmd_check(args: argparse.Namespace) -> int:
     print(f"wikiskill {__version__} on Python {platform.python_version()} ({platform.system()})")
-    if sys.version_info < (3, 9):
+    if sys.version_info < (3, 9):  # noqa: UP036 -- a clear message for users who start an old Python
         print("error: Python 3.9 or newer is required", file=sys.stderr)
         return EXIT_CONFIG
     if args.suite:
@@ -347,7 +348,7 @@ def _print_status(state: Any) -> None:
               f"val {_fmt(h['val_score'])}")
 
 
-def _fmt(value: Optional[float]) -> str:
+def _fmt(value: float | None) -> str:
     return "-" if value is None else f"{value:.4f}"
 
 
