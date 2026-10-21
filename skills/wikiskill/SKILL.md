@@ -62,7 +62,7 @@ Windows は `python3` を `py`、無ければ `python` に）。
 ## C. 続き・進み具合
 
 `WS improve S --workspace W --export ~/.claude/skills` を再実行すれば途中から再開し、何もなければ「nothing to do」と出てスキルの書き出しだけ行う。
-進み具合だけなら `WS status W/gen-NNN`（一番大きい番号）。スキルあり／なしの厳密な比較（`evaluate`・`compare`）は利用者が求めたときだけ。
+進み具合だけなら `WS status W`。スキルあり／なしの厳密な比較（`evaluate`・`compare`）は利用者が求めたときだけ。
 
 ## 人の判定（利用者が望んだときだけ）
 

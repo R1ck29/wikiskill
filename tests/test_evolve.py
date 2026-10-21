@@ -2,6 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.fakes import FakeBackend
 from wikiskill.config import load_suite
@@ -9,6 +10,7 @@ from wikiskill.evaluate import evaluate, paired_bootstrap
 from wikiskill.evolve import Evolution, EvolveOptions
 from wikiskill.review import apply_sheet, collect
 from wikiskill.scoring import HumanReviewPending, read_review_rows, write_review_sheet
+from wikiskill.util import read_text
 from wikiskill.workspace import Workspace
 
 
@@ -153,6 +155,59 @@ class EvolveLoopTest(unittest.TestCase):
             f.write(json.dumps({"id": "t9", "split": "train", "prompt": "new", "answer": "TOTAL"}) + "\n")
         with self.assertRaises(ValueError):
             Evolution(load_suite(suite_dir), FakeBackend(), ws, self.opts).run()
+
+    def finished_run_then_new_task(self, **task):
+        """Evolve one iteration, then add a task: returns (suite_dir, workspace, options that adopt it)."""
+        suite_dir = write_suite(self.root / "suite")
+        ws = Workspace(self.root / "ws")
+        Evolution(load_suite(suite_dir), FakeBackend(), ws, EvolveOptions(iterations=1, workers=1)).run()
+        with open(suite_dir / "tasks.jsonl", "a", encoding="utf-8") as f:
+            f.write(json.dumps({"prompt": "new", **task}) + "\n")
+        return suite_dir, ws, EvolveOptions(iterations=1, workers=1, adopt_new_tasks=True)
+
+    def test_changed_task_ids_start_a_new_round_when_adopted(self):
+        suite_dir, ws, opts = self.finished_run_then_new_task(id="v9", split="val", answer="OTHER")  # never solved
+        state = Evolution(load_suite(suite_dir), FakeBackend(), ws, opts).run()
+        self.assertEqual([h["outcome"] for h in state["history"]], ["rejected", "new_tasks", "accepted"])
+        self.assertEqual((state["round_start"], state["iteration"], state["baseline"]), (2, 3, 0.0))
+        self.assertAlmostEqual(state["r_best"], 2 / 3)  # gated against the re-measured score (0.0)
+        self.assertTrue((ws.runs / "iter_002_new_tasks_val").is_dir())
+        self.assertIn("## Round 2: tasks updated before iteration 2", read_text(ws.wiki / "skill-impact.md"))
+
+    def test_an_interrupted_re_measure_resumes_and_records_once(self):
+        suite_dir, ws, opts = self.finished_run_then_new_task(id="v9", split="val", answer="OTHER")
+        real = Evolution._score_split
+
+        def crash(evo, split, skills, label, stage_dir):
+            if label.endswith("_new_tasks_val"):
+                raise KeyboardInterrupt
+            return real(evo, split, skills, label, stage_dir)
+
+        with mock.patch.object(Evolution, "_score_split", crash), self.assertRaises(KeyboardInterrupt):
+            Evolution(load_suite(suite_dir), FakeBackend(), ws, opts).run()
+        state = Evolution(load_suite(suite_dir), FakeBackend(), ws, opts).run()
+        self.assertEqual([h["outcome"] for h in state["history"]], ["rejected", "new_tasks", "accepted"])
+        self.assertEqual(read_text(ws.wiki / "skill-impact.md").count("tasks updated before"), 1)
+
+    def test_rounds_at_the_same_iteration_are_recorded_separately(self):
+        suite_dir = write_suite(self.root / "suite")
+        ws = Workspace(self.root / "ws")
+        opts = EvolveOptions(iterations=2, workers=1, adopt_new_tasks=True)
+        Evolution(load_suite(suite_dir), FakeBackend(), ws, opts).run()  # rejected, then accepted: val 1.0
+        for task_id, split in (("v9", "val"), ("t9", "train")):  # solved at once: the round runs no iteration
+            with open(suite_dir / "tasks.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps({"id": task_id, "split": split, "prompt": "new", "answer": "TOTAL"}) + "\n")
+            state = Evolution(load_suite(suite_dir), FakeBackend(), ws, opts).run()
+        self.assertEqual([h["outcome"] for h in state["history"]], ["rejected", "accepted", "new_tasks", "new_tasks"])
+        impact = read_text(ws.wiki / "skill-impact.md")
+        self.assertIn("## Round 2: tasks updated before iteration 3", impact)
+        self.assertIn("## Round 3: tasks updated before iteration 3", impact)
+
+    def test_tasks_changed_mid_iteration_are_refused(self):
+        suite_dir, ws, opts = self.finished_run_then_new_task(id="t9", split="train", answer="TOTAL")
+        ws.raw_dir(2).mkdir(parents=True)  # iteration 2 had already rolled out with the old tasks
+        with self.assertRaisesRegex(ValueError, "middle of iteration 2"):
+            Evolution(load_suite(suite_dir), FakeBackend(), ws, opts).run()
 
     def test_interrupted_wiki_backup_is_not_restored(self):
         from wikiskill.evolve import _copy_atomic

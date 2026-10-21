@@ -11,6 +11,10 @@
 
 Every stage stores its output before the next starts, so `evolve` can be re-run to
 resume after an interruption or after a human review sheet has been filled in.
+
+With `adopt_new_tasks` (used by `improve`), a changed train/val task set starts a new round in the
+same workspace: val is scored again with the current skills, that score becomes R_best, and K more
+iterations follow. Skills, wiki and raw traces are kept, and iteration numbers keep counting.
 """
 from __future__ import annotations
 
@@ -39,11 +43,19 @@ class EvolveOptions:
     seed: int = 0
     max_turns: int = 20  # paper: 10 <= T_ReAct <= 20 (Appendix D.2)
     min_traces: int = 4  # proposer rule 4 (Appendix E.3)
+    adopt_new_tasks: bool = False  # changed train/val ids start a new round instead of being refused
 
 
 def is_done(state: dict[str, Any], iterations: int) -> bool:
-    """True when the loop has nothing left to do: K iterations used, or validation already 1.0 (line 4)."""
-    return state.get("r_best") is not None and (state["iteration"] > iterations or state["r_best"] >= 1.0)
+    """True when the loop has nothing left to do: K iterations used in this round, or validation 1.0 (line 4)."""
+    return state.get("r_best") is not None and (state["iteration"] - state.get("round_start", 1) >= iterations
+                                                or state["r_best"] >= 1.0)
+
+
+def has_work(state: dict[str, Any] | None, suite: Suite, iterations: int) -> bool:
+    """True unless the round is finished and the train/val tasks did not change since it started."""
+    tasks = task_fingerprint(suite)
+    return state is None or not is_done(state, iterations) or state.get("tasks", tasks) != tasks
 
 
 def mean(outcomes: dict[str, Outcome]) -> float:
@@ -67,11 +79,7 @@ class Evolution:
     def _run(self) -> dict[str, Any]:
         state = self._load_state()
         if state["r_best"] is None:
-            outcomes = self._score_split("val", load_skills(self.ws.skills), "baseline_val",
-                                         self.ws.stage_dir("baseline_val"))
-            state.update(r_best=mean(outcomes), baseline=mean(outcomes))
-            self.ws.save_state(state)
-            log.info("baseline validation score (no skills): %.4f", state["r_best"])
+            self._score_start(state)
         while not is_done(state, self.opts.iterations):
             self._iteration(state)
         if state["r_best"] >= 1.0:
@@ -91,14 +99,38 @@ class Evolution:
             state["tasks"] = task_fingerprint(self.suite)
             self.ws.save_state(state)
         elif state["tasks"] != task_fingerprint(self.suite):
-            raise ValueError("the train/val task ids changed since this workspace was started; scores would "
-                             "not be comparable. Use a new --workspace (answers and rubrics may change freely).")
+            if not self.opts.adopt_new_tasks:
+                raise ValueError("the train/val task ids changed since this workspace was started; scores would "
+                                 "not be comparable. Use a new --workspace (answers and rubrics may change freely).")
+            k = state["iteration"]
+            if state["r_best"] is None or state["stage"] != "rollout" or self.ws.raw_dir(k).exists():
+                raise ValueError(f"the train/val task ids changed in the middle of iteration {k}. Restore the "
+                                 "tasks file, run again to finish the iteration, then change the tasks.")
+            state.update(tasks=task_fingerprint(self.suite), r_best=None, round_start=k)
+            self.ws.save_state(state)
         return state
+
+    def _score_start(self, state: dict[str, Any]) -> None:
+        """R_best of a round: val with no skills at the start, with the current skills after a task change."""
+        k, first = state["iteration"], state["baseline"] is None
+        label = "baseline_val" if first else f"iter_{k:03d}_new_tasks_val"
+        score = mean(self._score_split("val", load_skills(self.ws.skills), label, self.ws.stage_dir(label)))
+        state["r_best"] = score
+        if first:
+            state["baseline"] = score
+            log.info("baseline validation score (no skills): %.4f", score)
+        else:
+            rounds = 2 + sum(h["outcome"] == "new_tasks" for h in state["history"])
+            _record_new_tasks(self.ws, rounds, k, score)
+            state["history"].append({"iteration": k, "action": None, "target": None, "val_score": score,
+                                     "r_best": score, "outcome": "new_tasks"})
+            log.info("tasks changed: validation score with the current skills %.4f", score)
+        self.ws.save_state(state)
 
     def _iteration(self, state: dict[str, Any]) -> None:
         k = state["iteration"]
-        log.info("=== iteration %d/%d (stage: %s, best val %.4f) ===", k, self.opts.iterations,
-                 state["stage"], state["r_best"])
+        log.info("=== iteration %d (%d/%d of this round, stage: %s, best val %.4f) ===", k,
+                 k - state.get("round_start", 1) + 1, self.opts.iterations, state["stage"], state["r_best"])
         outcomes = self._train_outcomes(k)
         tasks = self.suite.split("train")
         if state["stage"] == "rollout":
@@ -221,23 +253,33 @@ def _note_purpose(skill_dir: Path, k: int, pending: dict[str, Any]) -> None:
                 f"({pending['r_best_before']:.4f} -> {pending['score']:.4f}).\n")
 
 
+def _append_impact(ws: Workspace, header: str, body: str) -> None:
+    """Append a section to wiki/skill-impact.md unless an interrupted earlier attempt already wrote it."""
+    path = ws.wiki / "skill-impact.md"
+    if header not in read_text(path):
+        append_text(path, f"\n{header}{body}")
+
+
+def _record_new_tasks(ws: Workspace, round_no: int, k: int, score: float) -> None:
+    """Tell later proposers that validation scores before iteration k used other tasks."""
+    _append_impact(ws, f"## Round {round_no}: tasks updated before iteration {k}",
+                   f"\n\n- Train/val tasks changed. Validation with the current skills: {score:.4f}; "
+                   "earlier scores are not comparable.\n")
+
+
 def _record_skill_impact(ws: Workspace, k: int, pending: dict[str, Any]) -> None:
     """Programmatic audit trail W_k <- Update(W'_k, P_k, R(T_val,k), a_k) (paper §3.2.4)."""
-    header = f"## Iteration {k} "
-    path = ws.wiki / "skill-impact.md"
-    if header in read_text(path):
-        return  # already written by an interrupted earlier attempt
     proposal = pending["proposal"]
     action = proposal.get("action")
     if pending["score"] is None:
-        body = f"{header}- NO_ACTION\n\n- Reason: {proposal.get('reason', 'proposer chose no change')}\n"
+        body = f"- NO_ACTION\n\n- Reason: {proposal.get('reason', 'proposer chose no change')}\n"
     else:
         outcome = "ACCEPTED" if pending["accepted"] else "REJECTED"
         body = (
-            f"{header}- {outcome}\n\n- Action: {action} skill `{pending['target']}`\n"
+            f"- {outcome}\n\n- Action: {action} skill `{pending['target']}`\n"
             f"- Validation score: {pending['score']:.4f} (best before: {pending['r_best_before']:.4f})\n"
             f"\n```diff\n{pending['diff']}```\n"
         )
         if isinstance(proposal.get("purpose_md"), str):
             body += f"\nPURPOSE.md of the proposal:\n\n```markdown\n{proposal['purpose_md'].rstrip()}\n```\n"
-    append_text(path, "\n" + body)
+    _append_impact(ws, f"## Iteration {k} ", body)

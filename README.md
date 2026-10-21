@@ -73,8 +73,8 @@ Python を実行できない場合は、`skills/wikiskill` フォルダを `<既
 ```
  育ったスキルで作業 → 利用者が「良い」「違う、正しくは…」と言う
    → feedback: その依頼・結果・正解をスイートの feedback.jsonl に記録（Claude が自動で実行）
-   → 3 件たまると improve: 記録を学習用・検証用タスクに加え、前の世代のスキルと wiki を引き継いだ
-     新しい世代（workspace/gen-NNN）で育て直し、検証で点が上がったときだけ採用 → ~/.claude/skills を自動更新
+   → 3 件たまると improve: 記録を学習用・検証用タスクに加え、同じワークスペースでスキルと wiki をそのまま使って
+     育成を続け（今のスキルで検証し直した点数を基準に）、点が上がったときだけ採用 → ~/.claude/skills を自動更新
 ```
 
 書き出したスキルの末尾には「結果の評価を WikiSkill に記録する」案内が付いているので、利用者が何も指示しなくても記録されます。
@@ -178,15 +178,15 @@ tasks.jsonl に正解と採点基準が書き込まれます（最初の元フ�
 | `compare A.json B.json` | 2 つの評価結果の差を検定 |
 | `review` / `review-apply` | ハイブリッド方式のレビュー |
 | `status DIR` | 反復ごとの採否と検証スコアを表示 |
-| `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し |
+| `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し（`--suite SUITE` で、結果の評価をそのスイートに記録する案内も付ける） |
 | `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー |
 | `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル） |
-| `improve SUITE --workspace DIR --export DEST` | 世代を進めて育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上なら新しい世代、なければ最新の世代のスキルを書き出すだけ |
+| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上（初回はすべて）ならタスクに加えて `--iterations`（既定 3）回続ける、なければスキルを書き出すだけ（0.2 の `gen-NNN` 形式のワークスペースは一番新しいものを使い続ける） |
 
-モデルを使うコマンド（`check`・`evolve`・`evaluate`・`review`）では `--backend claude|codex`、`--model`、
-`--backend-config`（CLI の引数を変える。[docs/CONFIGURATION.md](docs/CONFIGURATION.md)）が使えます。
-`evolve`・`evaluate`・`review` には `--workers`（並列数、既定 4）、`evolve`・`evaluate` には `--judge-model`（llm_judge の採点モデル）
-と `--human-review on|off` もあります。全オプションは `python -m wikiskill <コマンド> --help` で確認できます。
+モデルを使うコマンド（`check`・`evolve`・`improve`・`evaluate`・`review`）では `--backend claude|codex`、`--model`、
+`--judge-model`（llm_judge の採点モデル）、`--backend-config`（CLI の引数を変える。[docs/CONFIGURATION.md](docs/CONFIGURATION.md)）が使えます。
+`evolve`・`improve`・`evaluate`・`review` には `--workers`（並列数、既定 4）、`evolve`・`improve`・`evaluate` には
+`--human-review on|off` もあります。全オプションは `python -m wikiskill <コマンド> --help` で確認できます。
 
 | 終了コード | 意味 | 対処 |
 |---|---|---|
@@ -213,7 +213,8 @@ workspaces/sales/
 
 ## コストの目安
 
-最初に val 件数分、その後 1 反復ごとに train 件数＋val 件数分のエージェント実行があります。
+最初に val 件数分、その後 1 反復ごとに train 件数＋val 件数分のエージェント実行があります
+（`improve` で記録がタスクに加わるたびに、今のスキルでの val 件数分が加わります）。
 加えて Wiki メンテナが 1 回（応答が壊れていた場合は最大 3 回）、スキル提案者が最大 20 回のテキスト生成を行い、
 `llm_judge` 採点なら採点 1 件につき 1 回の呼び出しが増えます。まず少数のタスクと `--iterations 2` で試してください。
 

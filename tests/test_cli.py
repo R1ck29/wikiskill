@@ -44,6 +44,13 @@ class CLITest(unittest.TestCase):
         self.assertFalse((dest / "report-total" / "PURPOSE.md").exists())
         code, out = run_cli("export", self.ws.root, "--dest", dest)
         self.assertIn("skip report-total", out)
+        code, out = run_cli("export", self.ws.root, "--dest", dest, "--force", "--suite", self.suite_dir)
+        self.assertEqual(code, 0, out)
+        exported = read_text(dest / "report-total" / "SKILL.md")
+        self.assertIn("## Feedback for automatic improvement", exported)
+        self.assertIn(str(self.suite_dir.resolve()), exported)
+        self.assertEqual(run_cli("export", self.ws.root, "--dest", dest, "--suite", self.root / "missing")[0],
+                         EXIT_CONFIG)
         with mock.patch.dict("os.environ", {"HOME": str(self.root), "USERPROFILE": str(self.root)}):
             run_cli("export", self.ws.root, "--dest", "~/.agents/skills")
         self.assertTrue((self.root / ".agents" / "skills" / "report-total" / "SKILL.md").is_file())

@@ -1,4 +1,4 @@
-"""Learning from real usage: `feedback` (pending queue) and `improve` (generations)."""
+"""Learning from real usage: `feedback` (pending queue) and `improve` (rounds in one workspace)."""
 import contextlib
 import json
 import re
@@ -10,8 +10,8 @@ from tests.fakes import FakeBackend, TempDirTest
 from tests.test_cli import run_cli
 from tests.test_evolve import write_suite
 from wikiskill.config import load_suite
-from wikiskill.evolve import is_done
-from wikiskill.improve import FEEDBACK, MERGED, generations, merge_pending, pending, prepare_generation
+from wikiskill.evolve import has_work, is_done
+from wikiskill.improve import FEEDBACK, MERGED, merge_pending, merge_ready, pending
 from wikiskill.skills import EXPORT_MARK
 from wikiskill.util import read_text
 from wikiskill.workspace import Workspace
@@ -134,16 +134,19 @@ class ImproveTest(TempDirTest):
     def improve(self, *argv):
         return run_cli("improve", self.suite, "--workspace", self.ws, "--export", self.dest, "--workers", 1, *argv)
 
-    def add_feedback(self, n):
+    def add_feedback(self, n, output="TOTAL"):
         for i in range(n):
-            code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", f"real {i}",
-                                "--output", "TOTAL")
+            code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", f"real {i} {output}",
+                                "--output", output)
             self.assertEqual(code, 0, out)
 
-    def test_generations_carry_skills_and_merge_feedback(self):
+    def state(self):
+        return Workspace(self.ws).load_state()
+
+    def test_feedback_starts_a_new_round_in_the_same_workspace(self):
         code, out = self.improve()
         self.assertEqual(code, 0, out)
-        self.assertEqual([p.name for p in generations(self.ws)], ["gen-001"])
+        first = self.state()
         exported = read_text(self.dest / "report-total" / "SKILL.md")
         self.assertIn(FEEDBACK_HEADING, exported)
         self.assertIn(str(self.suite.resolve()), exported)
@@ -155,63 +158,95 @@ class ImproveTest(TempDirTest):
         self.assertIn("nothing to do: 2", self.improve()[1])  # below --min-new 3
 
         code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", "real 9", "--output", "TOTAL")
-        self.assertIn("ready: run `improve`", out)  # the third row tells the caller to start a generation
+        self.assertIn("ready: run `improve`", out)  # the third row tells the caller to run improve
         code, out = self.improve()
         self.assertEqual(code, 0, out)
         self.assertIn("merged feedback: 3", out)
-        gen2 = self.ws / "gen-002"
-        self.assertTrue((gen2 / "skills" / "report-total" / "SKILL.md").is_file())  # seeded from gen-001
-        self.assertTrue((gen2 / "wiki" / "skill-impact.md").is_file())
+        self.assertEqual(list(self.ws.glob("gen-*")), [])  # no copies: the same workspace goes on
         tasks = [json.loads(line) for line in read_text(self.suite / "tasks.jsonl").splitlines()]
         self.assertEqual([t["split"] for t in tasks[8:]], ["train", "train", "val"])
         self.assertEqual(len(read_text(self.suite / "tasks.jsonl.bak").splitlines()), 8)
         self.assertEqual(pending(self.suite), [])
         self.assertEqual(len(read_text(self.suite / MERGED).splitlines()), 3)
-        state = json.loads(read_text(gen2 / "state.json"))
-        self.assertEqual(state["baseline"], 1.0)  # the carried-over skill already solves the new tasks
+        state = self.state()
+        self.assertEqual(state["baseline"], first["baseline"])  # still the first, skill-less score
+        self.assertEqual(state["round_start"], first["iteration"])
+        self.assertEqual(state["history"][:len(first["history"])], first["history"])
+        self.assertEqual(state["history"][-1]["outcome"], "new_tasks")
+        self.assertEqual(state["r_best"], 1.0)  # the kept skill already solves the new tasks
+        self.assertIn(f"## Round 2: tasks updated before iteration {first['iteration']}",
+                      read_text(self.ws / "wiki" / "skill-impact.md"))
 
-    def test_an_unfinished_generation_is_resumed_without_merging(self):
-        ws = Workspace(self.ws / "gen-001")
+    def test_a_new_round_runs_more_iterations_with_continued_numbers(self):
+        self.assertEqual(self.improve()[0], 0)
+        start = self.state()["iteration"]
+        self.add_feedback(3, output="OTHER")  # results the skill does not produce: validation drops below 1.0
+        code, out = self.improve()
+        self.assertEqual(code, 0, out)
+        state = self.state()
+        rows = [h for h in state["history"] if h["iteration"] >= start]
+        self.assertEqual(rows[0]["outcome"], "new_tasks")
+        self.assertEqual([h["iteration"] for h in rows[1:]], [start, start + 1, start + 2])  # --iterations 3
+        self.assertEqual(state["iteration"], start + 3)
+        self.assertTrue((self.ws / "raw" / f"iter_{start + 2:03d}").is_dir())
+        self.assertIn("nothing to do", self.improve()[1])
+
+    def test_an_unfinished_round_is_resumed_without_merging(self):
+        ws = Workspace(self.ws)
         ws.init()
         ws.save_state({"iteration": 2, "r_best": 0.5})
         self.add_feedback(3)
-        chosen, merged = prepare_generation(self.suite, self.suite / "tasks.jsonl", self.ws, 3, 3)
-        self.assertEqual((chosen.root, merged), (ws.root, 0))
+        self.assertEqual(merge_ready(self.suite, self.suite / "tasks.jsonl", ws.load_state(), 3, 3), 0)
         self.assertEqual(len(pending(self.suite)), 3)
+        self.assertTrue(has_work(ws.load_state(), load_suite(self.suite), 3))
+
+    def test_a_round_is_done_after_its_iterations_or_a_perfect_score(self):
         self.assertTrue(is_done({"iteration": 4, "r_best": 0.5}, 3))
         self.assertTrue(is_done({"iteration": 2, "r_best": 1.0}, 3))
         self.assertFalse(is_done({"iteration": 1, "r_best": None}, 3))
+        self.assertFalse(is_done({"iteration": 5, "round_start": 3, "r_best": 0.5}, 3))
+        self.assertTrue(is_done({"iteration": 6, "round_start": 3, "r_best": 0.5}, 3))
 
-    def test_an_interrupted_preparation_is_redone(self):
-        self.assertEqual(self.improve()[0], 0)  # gen-001 finished
+    def test_a_crash_after_the_merge_still_starts_the_round(self):
+        self.assertEqual(self.improve()[0], 0)
         self.add_feedback(3)
-        staging = Workspace(self.ws / "gen-next")  # crash after init, before seeding and merging
-        staging.init()
-        chosen, merged = prepare_generation(self.suite, self.suite / "tasks.jsonl", self.ws, 3, 3)
-        self.assertEqual((chosen.root.name, merged), ("gen-002", 3))
-        self.assertTrue((chosen.skills / "report-total" / "SKILL.md").is_file())
-        self.assertFalse((self.ws / "gen-next").exists())
-        self.assertEqual(self.improve()[0], 0)  # evolves gen-002 to the end
-        # crash after merging, before the rename: the merged tasks still get their generation
-        staging = Workspace(self.ws / "gen-next")
-        staging.init()
-        chosen, merged = prepare_generation(self.suite, self.suite / "tasks.jsonl", self.ws, 3, 3)
-        self.assertEqual(chosen.root.name, "gen-003")
-        self.assertEqual(merged, 0)
+        self.assertEqual(merge_pending(self.suite, self.suite / "tasks.jsonl"), 3)  # then the process died
+        self.assertTrue(has_work(self.state(), load_suite(self.suite), 3))
+        code, out = self.improve()
+        self.assertEqual(code, 0, out)
+        self.assertIn("merged feedback: 0", out)
+        self.assertEqual(self.state()["history"][-1]["outcome"], "new_tasks")
+
+    def test_a_workspace_of_generations_continues_in_its_newest_one(self):
+        legacy = self.ws / "gen-002"  # layout written by 0.2.x
+        code, out = run_cli("improve", self.suite, "--workspace", legacy, "--workers", 1)
+        self.assertEqual(code, 0, out)
+        (self.ws / "gen-001").mkdir()
+        code, out = self.improve()
+        self.assertEqual(code, 0, out)
+        self.assertIn("nothing to do", out)
+        self.assertFalse((self.ws / "state.json").exists())
+        self.assertTrue((self.dest / "report-total" / "SKILL.md").is_file())  # exported from gen-002
+        code, out = run_cli("status", self.ws)
+        self.assertEqual(code, 0, out)
+        self.assertIn("report-total", out)
+        self.assertIn("exported report-total", run_cli("export", self.ws, "--dest", self.root / "other")[1])
 
     def test_merge_skips_rows_already_in_the_tasks_file(self):
         self.add_feedback(1)
         (row,) = pending(self.suite)
         with (self.suite / "tasks.jsonl").open("a", encoding="utf-8") as f:  # merged before a crash
             f.write(json.dumps({**row, "split": "train"}) + "\n")
+        (self.suite / MERGED).write_text(json.dumps(row) + "\n", encoding="utf-8")  # logged before the crash too
         self.assertEqual(merge_pending(self.suite, self.suite / "tasks.jsonl"), 0)
         self.assertEqual(len(load_suite(self.suite).tasks), 9)
+        self.assertEqual(len(read_text(self.suite / MERGED).splitlines()), 1)
         self.assertEqual(pending(self.suite), [])
 
     def test_nothing_to_do_still_exports_and_takes_over_manual_exports(self):
         self.assertEqual(self.improve()[0], 0)
         exported = self.dest / "report-total" / "SKILL.md"
-        code, out = run_cli("export", self.ws / "gen-001", "--dest", self.dest, "--force")
+        code, out = run_cli("export", self.ws, "--dest", self.dest, "--force")
         self.assertEqual(code, 0, out)
         self.assertIn(EXPORT_MARK, read_text(exported))
         self.assertNotIn(FEEDBACK_HEADING, read_text(exported))

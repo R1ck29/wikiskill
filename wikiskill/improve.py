@@ -1,9 +1,9 @@
-"""Learning from real usage: queue feedback on real results, then re-evolve in generations.
+"""Learning from real usage: queue feedback on real results, then keep evolving the same workspace.
 
 `feedback` appends one judged real-world result to `<suite>/feedback.jsonl` (the pending queue).
-`improve` (see `prepare_generation`) turns pending rows into train/val tasks and evolves a new generation
-`gen-NNN` that starts from the previous generation's skills and wiki, so improvement continues
-instead of starting over (a new generation is needed because train/val changed).
+`improve` moves pending rows into the train/val tasks once the current round is finished
+(`merge_ready`), and the changed task set starts a new round in the same workspace
+(EvolveOptions.adopt_new_tasks), so skills, wiki and history carry on.
 """
 from __future__ import annotations
 
@@ -25,8 +25,7 @@ from .workspace import Workspace
 FEEDBACK = "feedback.jsonl"
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
 FEEDBACK_FILES = "fb"  # input files of feedback rows: <files_dir>/fb/<id>/<name>
-STAGING = "gen-next"  # a generation is prepared here, then renamed to gen-NNN
-MIN_NEW = 3  # pending feedback rows that start a new generation (improve --min-new default)
+MIN_NEW = 3  # pending feedback rows that start a new round (improve --min-new default)
 
 
 def feedback_row(scorer_type: str, prompt: str, verdict: str, output: str | None = None,
@@ -91,37 +90,19 @@ def _rows(text: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in text.splitlines() if line.strip()]
 
 
-# ----- improve: generations ----------------------------------------------------------
-def generations(root: Path) -> list[Path]:
-    return sorted(p for p in Path(root).glob("gen-[0-9][0-9][0-9]") if p.is_dir())
+# ----- improve: rounds ----------------------------------------------------------------
+def resolve_workspace(root: Path) -> Workspace:
+    """The workspace at `root`, or its newest gen-NNN folder (layout written by improve in 0.2.x)."""
+    gens = sorted(p for p in Path(root).glob("gen-[0-9][0-9][0-9]") if p.is_dir())
+    return Workspace(gens[-1] if gens else root)
 
 
-def prepare_generation(suite_root: Path, tasks_path: Path, root: Path, iterations: int,
-                       min_new: int) -> tuple[Workspace | None, int]:
-    """Pick the workspace `improve` should evolve: (workspace or None if nothing to do, merged rows).
-
-    An unfinished generation is resumed as is. Otherwise a new generation is started from the
-    previous one's skills and wiki, with the pending feedback merged into the tasks file.
-    """
-    gens = generations(root)
-    last = Workspace(gens[-1]) if gens else None
-    if last is not None and not is_done(last.load_state() or {}, iterations):
-        return last, 0
-    staging = Path(root) / STAGING  # left over only when a previous preparation was interrupted
-    if last is not None and not staging.exists() and len(pending(suite_root)) < max(min_new, 1):
-        return None, 0
-    if staging.exists():
-        shutil.rmtree(str(staging))
-    ws = Workspace(staging)
-    ws.init()
-    if last is not None:  # carry the knowledge over; raw traces stay with their generation
-        for layer in ("skills", "wiki"):
-            shutil.copytree(str(last.root / layer), str(ws.root / layer), dirs_exist_ok=True)
-    merged = merge_pending(suite_root, tasks_path)
-    number = int(gens[-1].name[4:]) + 1 if gens else 1
-    final = Path(root) / f"gen-{number:03d}"
-    staging.rename(final)  # the generation appears only once it is complete
-    return Workspace(final), merged
+def merge_ready(suite_root: Path, tasks_path: Path, state: dict[str, Any] | None, iterations: int,
+                min_new: int) -> int:
+    """Merge pending feedback before the first run, or once the round is finished and enough rows wait."""
+    if state is not None and (not is_done(state, iterations) or len(pending(suite_root)) < max(min_new, 1)):
+        return 0
+    return merge_pending(suite_root, tasks_path)
 
 
 def merge_pending(suite_root: Path, tasks_path: Path) -> int:
@@ -141,19 +122,25 @@ def merge_pending(suite_root: Path, tasks_path: Path) -> int:
     for i, row in enumerate(new):
         lines.append(json.dumps({**row, "split": "val" if i % 3 == 2 else "train"}, ensure_ascii=False))
     write_text(tasks_path, "\n".join(lines) + "\n")
-    append_text(Path(suite_root) / MERGED, text)
+    history = Path(suite_root) / MERGED
+    logged = {r["id"] for r in _rows(read_text(history))} if history.is_file() else set()
+    append_text(history, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows if r["id"] not in logged))
     queue.unlink()
     return len(new)
 
 
+def feedback_footer(suite_root: Path) -> str:
+    """Text appended to exported skills so users' judgements are routed back as feedback."""
+    return ("## Feedback for automatic improvement\n"
+            "When the user judges a result of this skill (good, or wrong with the correct result), "
+            f"record it with the wikiskill skill as feedback for the suite `{Path(suite_root)}`.\n")
+
+
 def export_skills(skills_dir: Path, dest: Path, suite_root: Path) -> list[str]:
-    """Copy skills to `dest` with a footer that routes users' judgements back as feedback.
+    """Copy skills to `dest` with the feedback footer.
 
     Only files exported by wikiskill before (`export` or this function) are overwritten.
     """
-    footer = ("## Feedback for automatic improvement\n"
-              "When the user judges a result of this skill (good, or wrong with the correct result), "
-              f"record it with the wikiskill skill as feedback for the suite `{Path(suite_root)}`.\n")
-    copied = copy_skills(skills_dir, dest, exported_by_wikiskill, footer)
+    copied = copy_skills(skills_dir, dest, exported_by_wikiskill, feedback_footer(suite_root))
     return [f"exported {name} -> {target}" if written else f"skip {name}: {target} was not written by wikiskill"
             for name, target, written in copied]

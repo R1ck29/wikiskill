@@ -17,8 +17,16 @@ from . import __version__
 from .backends import make_backend
 from .config import ConfigError, load_suite
 from .evaluate import compare_reports, evaluate
-from .evolve import Evolution, EvolveOptions
-from .improve import MIN_NEW, export_skills, generations, pending, prepare_generation, record_feedback
+from .evolve import Evolution, EvolveOptions, has_work
+from .improve import (
+    MIN_NEW,
+    export_skills,
+    feedback_footer,
+    merge_ready,
+    pending,
+    record_feedback,
+    resolve_workspace,
+)
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
 from .skills import copy_skills, load_skills
@@ -79,14 +87,14 @@ def _add_run_commands(sub: Any) -> None:
     p.add_argument("--max-turns", type=int, default=defaults.max_turns, help="Skill Proposer turn limit")
     p.set_defaults(func=cmd_evolve)
 
-    p = sub.add_parser("improve", help="keep improving: resume, or start a new generation from pending feedback")
+    p = sub.add_parser("improve", help="keep improving: resume, or add pending feedback as tasks and evolve on")
     p.add_argument("suite", type=_path)
-    p.add_argument("--workspace", type=_path, required=True, help="folder holding the generations gen-NNN")
+    p.add_argument("--workspace", type=_path, required=True, help="workspace folder (kept across rounds)")
     _backend_args(p)
     _run_args(p)
-    p.add_argument("--iterations", type=int, default=3, help="iterations per generation (default %(default)s)")
+    p.add_argument("--iterations", type=int, default=3, help="iterations per round (default %(default)s)")
     p.add_argument("--min-new", type=int, default=MIN_NEW,
-                   help="pending feedback rows needed to start a new generation (default %(default)s)")
+                   help="pending feedback rows needed to start a new round (default %(default)s)")
     p.add_argument("--export", type=_path, help="also copy the skills here, e.g. ~/.claude/skills")
     p.set_defaults(func=cmd_improve)
 
@@ -149,6 +157,7 @@ def _add_helper_commands(sub: Any) -> None:
     p.add_argument("--dest", type=_path, required=True,
                    help="e.g. .claude/skills (Claude Code) or .agents/skills (Codex)")
     p.add_argument("--force", action="store_true", help="overwrite skills that already exist in --dest")
+    p.add_argument("--suite", type=_path, help="add the feedback footer for this suite (as `improve --export` does)")
     p.set_defaults(func=cmd_export)
 
 
@@ -239,27 +248,30 @@ def cmd_evolve(args: argparse.Namespace) -> int:
 
 
 def cmd_improve(args: argparse.Namespace) -> int:
-    suite = _suite(args, require_answers=False)  # checked strictly in _evolve_generation, after the merge
-    ws, merged = prepare_generation(suite.root, suite.tasks_path, args.workspace, args.iterations, args.min_new)
-    if ws is None:
-        print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
-              f"a new generation starts at {args.min_new}")
-        ws = Workspace(generations(args.workspace)[-1])  # the last generation exists and is finished
+    suite = _suite(args, require_answers=False)  # checked strictly in _evolve_round, after the merge
+    ws = resolve_workspace(args.workspace)
+    state = ws.load_state()
+    merged = merge_ready(suite.root, suite.tasks_path, state, args.iterations, args.min_new)
+    if merged:
+        suite = _suite(args, require_answers=False)
+    if has_work(state, suite, args.iterations):
+        _evolve_round(args, ws, merged)
     else:
-        _evolve_generation(args, ws, merged)
+        print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
+              f"a new round starts at {args.min_new}")
     if args.export:  # also when there is nothing to do, so a missed or manual export is brought up to date
         for message in export_skills(ws.skills, args.export, suite.root):
             print(message)
     return 0
 
 
-def _evolve_generation(args: argparse.Namespace, ws: Workspace, merged: int) -> None:
+def _evolve_round(args: argparse.Namespace, ws: Workspace, merged: int) -> None:
     suite = _suite(args)  # strict check now that the feedback is merged
     backend, judge = _backends(args)
+    opts = EvolveOptions(iterations=args.iterations, workers=args.workers, adopt_new_tasks=True)
     with _file_log(ws.root / "run.log"):
         log.info("improve: suite=%s workspace=%s merged_feedback=%d", suite.name, ws.root, merged)
-        state = Evolution(suite, backend, ws, EvolveOptions(iterations=args.iterations, workers=args.workers),
-                          judge).run()
+        state = Evolution(suite, backend, ws, opts, judge).run()
     _print_status(state)
     print(f"\nmerged feedback: {merged}\nskills: {ws.skills}")
 
@@ -267,7 +279,7 @@ def _evolve_generation(args: argparse.Namespace, ws: Workspace, merged: int) -> 
 def cmd_evaluate(args: argparse.Namespace) -> int:
     suite = _suite(args)
     backend, judge = _backends(args)
-    skills_dir = Workspace(args.workspace).skills if args.workspace else (None if args.no_skills else args.skills)
+    skills_dir = resolve_workspace(args.workspace).skills if args.workspace else (None if args.no_skills else args.skills)
     if skills_dir is not None and not skills_dir.is_dir():
         raise FileNotFoundError(f"skills folder not found: {skills_dir}")
     with _file_log(args.out / "run.log"):
@@ -326,17 +338,18 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     task_id, count = record_feedback(suite, args.prompt, args.verdict, args.output, args.correct, args.note,
                                      args.file)
     print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`"
-          + ("\nready: run `improve` to start a new generation" if count >= MIN_NEW else ""))
+          + ("\nready: run `improve` to learn from them" if count >= MIN_NEW else ""))
     return 0
 
 
 def cmd_status(args: argparse.Namespace) -> int:
-    state = Workspace(args.workspace).load_state()
+    ws = resolve_workspace(args.workspace)
+    state = ws.load_state()
     if state is None:
         print(f"{args.workspace} has no state.json (not started)")
         return EXIT_CONFIG
     _print_status(state)
-    print("active skills:", ", ".join(n for n, _ in load_skills(Workspace(args.workspace).skills)) or "(none)")
+    print("active skills:", ", ".join(n for n, _ in load_skills(ws.skills)) or "(none)")
     return 0
 
 
@@ -353,7 +366,8 @@ def _fmt(value: float | None) -> str:
 
 
 def cmd_export(args: argparse.Namespace) -> int:
-    copied = copy_skills(Workspace(args.workspace).skills, args.dest, lambda target: args.force)
+    footer = feedback_footer(load_suite(args.suite, require_answers=False).root) if args.suite else ""
+    copied = copy_skills(resolve_workspace(args.workspace).skills, args.dest, lambda target: args.force, footer)
     if not copied:
         print("no skills to export")
         return EXIT_CONFIG

@@ -33,6 +33,10 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 各ステージは結果をディスクに保存してから次へ進み、現在位置を `state.json` に記録します。
 途中で止まっても同じ `evolve` コマンドで続きから再開でき、人のレビュー待ちもこの仕組みで実現しています。
 
+`improve` で実際の利用の記録が train / val に加わると、同じワークスペースで次の**ラウンド**が始まります。
+スキル・wiki・raw はそのまま残し、今のスキルで val を解き直したスコアを新しい R_best にして、反復番号を続けたまま K 回進めます
+（state.json の履歴に `new_tasks`、skill-impact.md に「タスクが変わったので以前のスコアとは比べられない」旨を記録）。
+
 ### 各エージェントに見せる情報
 
 | エージェント | 見えるもの | 見えないもの |
@@ -48,13 +52,13 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 ```
 wikiskill/
   cli.py          コマンド定義と終了コード
-  evolve.py       Algorithm 1 の反復ループとステージ管理（再開・人のレビュー待ち・ワークスペースのロック）
+  evolve.py       Algorithm 1 の反復ループとステージ管理（再開・人のレビュー待ち・タスク追加後の続行・ワークスペースのロック）
   rollout.py      推論エージェントの実行（一時フォルダ・並列実行・結果キャッシュ・実行記録の整形）
   maintainer.py   Wiki メンテナ（記録の抽出、プロンプト作成、JSON 編集の適用）
   proposer.py     スキル提案者（ReAct ループ、読み取り専用サンドボックス、提案の検証）
   scoring.py      採点（exact/contains/regex/number/script/llm_judge）とレビューシート
   review.py       ハイブリッド方式（1 回だけ人が確認 → 正解データ化）
-  improve.py      実際の利用からの改善（feedback の記録、gen-NNN 世代の準備と引き継ぎ、フッター付きの書き出し）
+  improve.py      実際の利用からの改善（feedback の記録、タスクへの取り込み、フッター付きの書き出し）
   evaluate.py     任意のスキルでの評価と、対応ありブートストラップ検定
   skills.py       SKILL.md の検証（Agent Skills 仕様）、プロンプトへの埋め込み、提案の適用
   patching.py     append / replace / insert_after の部分編集と差分（wiki とスキルで共用）
@@ -116,5 +120,5 @@ tools/integrate.py                             既存プラグインへ、パッ
 11. **CLI の障害は採点しない**: 障害を「不正解」として wiki や採否判定に混ぜないためです（[CONFIGURATION.md](CONFIGURATION.md) 4 章）。
 
 論文にない追加機能: 人による採点（ハイブリッド / 毎回）、`script`・`llm_judge` などの採点方法、途中再開、
-`evaluate` / `compare` / `export` コマンド。論文が挙げる限界（スキル検索をしない全文埋め込み、wiki の自動整理がない、
+`evaluate` / `compare` / `export` コマンド、実際の利用からの改善（`feedback` と `improve`）。論文が挙げる限界（スキル検索をしない全文埋め込み、wiki の自動整理がない、
 毎回の改善を必須とする厳しい採否基準など）はこの実装にもそのまま当てはまります。
