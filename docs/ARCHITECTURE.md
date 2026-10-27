@@ -62,7 +62,7 @@ wikiskill/
   evaluate.py     任意のスキルでの評価と、対応ありブートストラップ検定
   skills.py       SKILL.md の検証（Agent Skills 仕様）、プロンプトへの埋め込み、提案の適用
   patching.py     append / replace / insert_after の部分編集と差分（wiki とスキルで共用）
-  workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、ロック
+  workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、ロック、旧 gen-NNN 形式の解決
   config.py       suite.json / tasks.jsonl の読み込みと検証
   backends.py     claude / codex CLI の呼び出し（タイムアウト・中断時のプロセス停止、再試行）
   util.py         UTF-8 入出力、LLM 出力からの JSON 抽出、切り詰め、CSV のエスケープ
@@ -79,7 +79,7 @@ skills/wikiskill/scripts/run_wikiskill.py      起動スクリプト。スキル
 tools/integrate.py                             既存プラグインへ、パッケージ・docs・examples を同梱した自己完結のスキルフォルダをコピー
 ```
 
-依存の向きは `cli → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → config/patching/workspace/util` の一方向です。
+依存の向きは `cli → improve → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → config/patching/workspace/util` の一方向です。
 
 拡張するときに触る場所:
 

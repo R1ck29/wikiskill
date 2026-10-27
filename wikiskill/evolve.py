@@ -139,7 +139,7 @@ class Evolution:
             self._maintain(k, outcomes)
             self._advance(state, "propose")
         if state["stage"] == "propose":
-            proposal_path = self._iter_dir(k) / "proposal.json"
+            proposal_path = self.ws.iter_dir(k) / "proposal.json"
             if not proposal_path.is_file():
                 write_json(proposal_path, run_proposer(self.backend, self.ws, self.suite, k, tasks, outcomes,
                                                        self.opts.max_turns, self.opts.min_traces))
@@ -153,9 +153,6 @@ class Evolution:
         state["stage"] = stage
         self.ws.save_state(state)
 
-    def _iter_dir(self, k: int) -> Path:
-        return self.ws.runs / f"iter_{k:03d}"
-
     # ----- stages ------------------------------------------------------------------
     def _train_outcomes(self, k: int) -> dict[str, Outcome]:
         """Rollout stage: score the training split and freeze it in the Raw Layer."""
@@ -164,7 +161,7 @@ class Evolution:
             return {tid: Outcome(**o) for tid, o in read_json(raw / "summary.json").items()}
         tasks = self.suite.split("train")
         results = run_tasks(self.backend, self.suite, tasks, load_skills(self.ws.skills),
-                            self._iter_dir(k) / "train", self.opts.workers)
+                            self.ws.iter_dir(k) / "train", self.opts.workers)
         outcomes = self.scorer.score_all(tasks, results, self.ws.reviews / f"iter_{k:03d}_train.csv")
         traces = {t.id: format_trace(t, results[t.id], outcomes[t.id]) for t in tasks}
         self.ws.write_raw(k, traces, {tid: o.__dict__ for tid, o in outcomes.items()})
@@ -172,7 +169,7 @@ class Evolution:
         return outcomes
 
     def _maintain(self, k: int, outcomes: dict[str, Outcome]) -> None:
-        backup = self._iter_dir(k) / "wiki_before_maintainer"
+        backup = self.ws.iter_dir(k) / "wiki_before_maintainer"
         if backup.is_dir():  # an earlier attempt stopped mid-way: start from the same wiki
             shutil.rmtree(self.ws.wiki)
             shutil.copytree(backup, self.ws.wiki)
@@ -186,19 +183,19 @@ class Evolution:
 
     def _validate(self, k: int, r_best: float) -> dict[str, Any]:
         """Build S'_k = Apply(S_{k-1}, P_k) and score it on the validation split."""
-        proposal = read_json(self._iter_dir(k) / "proposal.json")
+        proposal = read_json(self.ws.iter_dir(k) / "proposal.json")
         pending = {"proposal": proposal, "target": proposal.get("name"), "diff": "", "score": None,
                    "r_best_before": r_best, "accepted": False}
         if proposal.get("action") == "no_action":
             return pending
-        candidate, diff_path = self._iter_dir(k) / "candidate_skills", self._iter_dir(k) / "proposal.diff"
+        candidate, diff_path = self.ws.iter_dir(k) / "candidate_skills", self.ws.iter_dir(k) / "proposal.diff"
         if not candidate.is_dir():
-            staging = self._iter_dir(k) / ".candidate_staging"
+            staging = self.ws.iter_dir(k) / ".candidate_staging"
             write_text(diff_path, apply_proposal(self.ws.skills, proposal, staging)[1])
             staging.rename(candidate)
         pending["diff"] = read_text(diff_path)
         outcomes = self._score_split("val", load_skills(candidate), f"iter_{k:03d}_val",
-                                     self._iter_dir(k) / "val")
+                                     self.ws.iter_dir(k) / "val")
         pending["score"] = mean(outcomes)
         pending["accepted"] = pending["score"] > r_best  # strict improvement (Eq. 4)
         return pending
@@ -206,10 +203,10 @@ class Evolution:
     def _commit(self, state: dict[str, Any]) -> None:
         """Gate: accept or roll back skills; the wiki is kept either way."""
         k, pending = state["iteration"], state["pending"]
-        marker = self._iter_dir(k) / "skills_swapped"
+        marker = self.ws.iter_dir(k) / "skills_swapped"
         if pending["accepted"] and not marker.exists():  # safe to redo if interrupted half-way
             shutil.rmtree(self.ws.skills, ignore_errors=True)
-            shutil.copytree(self._iter_dir(k) / "candidate_skills", self.ws.skills)
+            shutil.copytree(self.ws.iter_dir(k) / "candidate_skills", self.ws.skills)
             _note_purpose(self.ws.skills / pending["target"], k, pending)
             marker.write_text("done\n", encoding="utf-8")
         _record_skill_impact(self.ws, k, pending)

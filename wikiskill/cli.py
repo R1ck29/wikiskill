@@ -25,12 +25,11 @@ from .improve import (
     merge_ready,
     pending,
     record_feedback,
-    resolve_workspace,
 )
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
 from .skills import copy_skills, load_skills
-from .workspace import Workspace
+from .workspace import Workspace, resolve_workspace
 
 log = logging.getLogger("wikiskill")
 # bundled examples sit next to the package (repository root, or the skill folder made by tools/integrate.py)
@@ -235,8 +234,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 def cmd_evolve(args: argparse.Namespace) -> int:
     suite = _suite(args)
     backend, judge = _backends(args)
-    ws = Workspace(args.workspace)
-    ws.init()
+    ws = resolve_workspace(args.workspace)
     opts = EvolveOptions(iterations=args.iterations, workers=args.workers, seed=args.seed, max_turns=args.max_turns)
     with _file_log(ws.root / "run.log"):
         log.info("evolve: suite=%s backend=%s workspace=%s human_review=%s", suite.name, backend.name, ws.root,

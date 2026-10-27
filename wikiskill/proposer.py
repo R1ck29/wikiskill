@@ -96,7 +96,7 @@ def run_proposer(backend: Any, ws: Workspace, suite: Suite, iteration: int, task
     sandbox = ReadSandbox(ws, iteration)
     required_reads = min(min_traces, len(tasks))
     transcript = [f"# Initial context\n\n{initial_context(ws, tasks, outcomes)}"]
-    log_path = ws.runs / f"iter_{iteration:03d}" / "proposer_transcript.md"
+    log_path = ws.iter_dir(iteration) / "proposer_transcript.md"
     for turn in range(1, max_turns + 1):
         if turn == max_turns:
             transcript.append("NOTE: this is your last turn. You must call finish now.")
@@ -111,7 +111,7 @@ def run_proposer(backend: Any, ws: Workspace, suite: Suite, iteration: int, task
     return {"action": "no_action", "reason": f"no valid proposal within {max_turns} turns"}
 
 
-def _step(reply: str, sandbox: ReadSandbox, ws: Workspace, required_reads: int):
+def _step(reply: str, sandbox: ReadSandbox, ws: Workspace, required_reads: int) -> tuple[str, dict | None]:
     """Execute one tool call. Returns (observation, proposal or None)."""
     try:
         action = extract_json_object(reply)

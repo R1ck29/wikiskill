@@ -20,7 +20,6 @@ from .config import ANSWER_REQUIRED, ConfigError, Suite
 from .evolve import is_done
 from .skills import copy_skills, exported_by_wikiskill
 from .util import append_text, backup_once, is_windows_reserved, read_text, write_text
-from .workspace import Workspace
 
 FEEDBACK = "feedback.jsonl"
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
@@ -91,12 +90,6 @@ def _rows(text: str) -> list[dict[str, Any]]:
 
 
 # ----- improve: rounds ----------------------------------------------------------------
-def resolve_workspace(root: Path) -> Workspace:
-    """The workspace at `root`, or its newest gen-NNN folder (layout written by improve in 0.2.x)."""
-    gens = sorted(p for p in Path(root).glob("gen-[0-9][0-9][0-9]") if p.is_dir())
-    return Workspace(gens[-1] if gens else root)
-
-
 def merge_ready(suite_root: Path, tasks_path: Path, state: dict[str, Any] | None, iterations: int,
                 min_new: int) -> int:
     """Merge pending feedback before the first run, or once the round is finished and enough rows wait."""

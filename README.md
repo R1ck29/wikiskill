@@ -129,7 +129,7 @@ test タスクでスキルなし／ありを比べ、差が偶然でないかを
 python -m wikiskill export workspaces/sales --dest ~/.claude/skills
 ```
 
-育ったスキルを書き出します（0.2.2 以降の `export` で書き出したスキルも、後の `improve --export` で自動更新されます）。書き出し先は使い方に合わせて選びます。
+育ったスキルを書き出します（`export` で書き出したスキルは、後の `improve --export` でも自動更新されます）。書き出し先は使い方に合わせて選びます。
 
 | 使い方 | `--dest` |
 |---|---|

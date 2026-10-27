@@ -115,7 +115,7 @@ def apply_output(ws: Workspace, iteration: int, data: dict[str, Any]) -> list[st
     return warnings
 
 
-def _pattern_name(entry: Any, warnings: list[str]) -> Any:
+def _pattern_name(entry: Any, warnings: list[str]) -> str | None:
     name = entry.get("name") if isinstance(entry, dict) else None
     if isinstance(name, str) and name.startswith("wiki/patterns/"):
         name = name[len("wiki/patterns/"):]

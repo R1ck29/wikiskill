@@ -235,12 +235,12 @@ def parse_verdict(value: str) -> float | None:
 
 
 def write_review_sheet(path: Path, rows: list[dict[str, str]]) -> None:
-    """UTF-8 with BOM so Excel on Windows shows Japanese correctly."""
+    """Write a human-review sheet (REVIEW_COLUMNS)."""
     write_sheet(path, REVIEW_COLUMNS, rows)
 
 
 def write_sheet(path: Path, columns: list[str], rows: list[dict[str, str]]) -> None:
-    """Write a CSV for Excel: UTF-8 with BOM, and text cells that look like formulas are escaped."""
+    """Write a CSV for Excel: UTF-8 with BOM (so Excel shows Japanese), formula-like text cells escaped."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=columns, extrasaction="ignore")

@@ -231,6 +231,10 @@ class ImproveTest(TempDirTest):
         self.assertEqual(code, 0, out)
         self.assertIn("report-total", out)
         self.assertIn("exported report-total", run_cli("export", self.ws, "--dest", self.root / "other")[1])
+        code, out = run_cli("evolve", self.suite, "--workspace", self.ws, "--iterations", 3, "--workers", 1)
+        self.assertEqual(code, 0, out)  # evolve follows the same folder instead of starting over in the root
+        self.assertFalse((self.ws / "state.json").exists())
+        self.assertIn("report-total", out)
 
     def test_merge_skips_rows_already_in_the_tasks_file(self):
         self.add_feedback(1)

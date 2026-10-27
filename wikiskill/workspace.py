@@ -5,7 +5,7 @@
     skills/   Skill Layer - active skills; replaced only when a candidate passes gating
     runs/     rollout cache, proposals and candidates (lets an interrupted run resume)
     reviews/  CSV sheets for human review
-    state.json  loop progress
+    state.json  loop progress;  run.log  log of evolve/improve;  evolve.lock  present while a run holds it
 """
 from __future__ import annotations
 
@@ -94,3 +94,13 @@ class Workspace:
     # ----- run cache -------------------------------------------------------------
     def stage_dir(self, stage: str) -> Path:
         return self.runs / stage
+
+    def iter_dir(self, iteration: int) -> Path:
+        """Run cache of one iteration: train/val rollouts, proposal, candidate skills."""
+        return self.stage_dir(f"iter_{iteration:03d}")
+
+
+def resolve_workspace(root: Path) -> Workspace:
+    """The workspace at `root`, or its newest gen-NNN folder (layout written by improve in 0.2.x)."""
+    gens = sorted(p for p in Path(root).glob("gen-[0-9][0-9][0-9]") if p.is_dir())
+    return Workspace(gens[-1] if gens else root)
