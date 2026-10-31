@@ -71,8 +71,11 @@ class Evolution:
         self.scorer = Scorer(suite, judge or backend)
 
     # ----- driver ------------------------------------------------------------------
-    def run(self) -> dict[str, Any]:
+    def run(self, locked: bool = False) -> dict[str, Any]:
+        """Run the loop to the end of the round; `locked`: the caller already holds the workspace lock."""
         self.ws.init()
+        if locked:
+            return self._run()
         with self.ws.lock():
             return self._run()
 

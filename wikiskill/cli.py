@@ -15,21 +15,25 @@ from typing import Any
 
 from . import __version__
 from .backends import make_backend
-from .config import ConfigError, load_suite
+from .config import ConfigError, Suite, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import Evolution, EvolveOptions, has_work
 from .improve import (
     MIN_NEW,
+    background_log,
     export_skills,
     feedback_footer,
+    load_settings,
     merge_ready,
     pending,
     record_feedback,
+    save_settings,
+    start_improve,
 )
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
 from .skills import copy_skills, load_skills
-from .workspace import Workspace, resolve_workspace
+from .workspace import LockBusy, Workspace, resolve_workspace
 
 log = logging.getLogger("wikiskill")
 # bundled examples sit next to the package (repository root, or the skill folder made by tools/integrate.py)
@@ -95,6 +99,8 @@ def _add_run_commands(sub: Any) -> None:
     p.add_argument("--min-new", type=int, default=MIN_NEW,
                    help="pending feedback rows needed to start a new round (default %(default)s)")
     p.add_argument("--export", type=_path, help="also copy the skills here, e.g. ~/.claude/skills")
+    p.add_argument("--wait", action="store_true",
+                   help="wait for a run that holds the workspace instead of failing (used by the automatic start)")
     p.set_defaults(func=cmd_improve)
 
     p = sub.add_parser("evaluate", help="score a split with evolved skills (or none)")
@@ -248,19 +254,47 @@ def cmd_evolve(args: argparse.Namespace) -> int:
 def cmd_improve(args: argparse.Namespace) -> int:
     suite = _suite(args, require_answers=False)  # checked strictly in _evolve_round, after the merge
     ws = resolve_workspace(args.workspace)
-    state = ws.load_state()
-    merged = merge_ready(suite.root, suite.tasks_path, state, args.iterations, args.min_new)
-    if merged:
-        suite = _suite(args, require_answers=False)
-    if has_work(state, suite, args.iterations):
-        _evolve_round(args, ws, merged)
-    else:
-        print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
-              f"a new round starts at {args.min_new}")
+    ws.init()
+    try:
+        with ws.lock(wait=args.wait):
+            _improve(args, ws, suite)
+    except LockBusy as e:
+        if not args.wait:
+            raise
+        print(f"{e}; that run will learn from the new feedback")
+        return 0
     if args.export:  # also when there is nothing to do, so a missed or manual export is brought up to date
         for message in export_skills(ws.skills, args.export, suite.root):
             print(message)
+    # feedback starts this same command later; a background run cannot stop for a person's scores
+    save_settings(suite.root, None if suite.human_review else (args.workspace, args.min_new, _improve_args(args)))
     return 0
+
+
+def _improve(args: argparse.Namespace, ws: Workspace, suite: Suite) -> None:
+    """Resume or start rounds until no round is left and too little feedback waits for a new one."""
+    rounds = 0
+    while True:  # feedback recorded during a round starts the next one right away
+        state = ws.load_state()
+        merged = merge_ready(suite.root, suite.tasks_path, state, args.iterations, args.min_new)
+        if merged:
+            suite = _suite(args, require_answers=False)
+        if not has_work(state, suite, args.iterations):
+            break
+        _evolve_round(args, ws, merged)
+        rounds += 1
+    if not rounds:
+        print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
+              f"a new round starts at {args.min_new}")
+
+
+def _improve_args(args: argparse.Namespace) -> list[str]:
+    """The options of this `improve` that the automatic start passes again (paths made absolute)."""
+    values = {"--backend": args.backend, "--model": args.model, "--judge-model": args.judge_model,
+              "--backend-config": args.backend_config and args.backend_config.resolve(),
+              "--workers": args.workers, "--human-review": args.human_review, "--iterations": args.iterations,
+              "--export": args.export and args.export.resolve()}
+    return [str(item) for flag, value in values.items() if value is not None for item in (flag, value)]
 
 
 def _evolve_round(args: argparse.Namespace, ws: Workspace, merged: int) -> None:
@@ -269,7 +303,7 @@ def _evolve_round(args: argparse.Namespace, ws: Workspace, merged: int) -> None:
     opts = EvolveOptions(iterations=args.iterations, workers=args.workers, adopt_new_tasks=True)
     with _file_log(ws.root / "run.log"):
         log.info("improve: suite=%s workspace=%s merged_feedback=%d", suite.name, ws.root, merged)
-        state = Evolution(suite, backend, ws, opts, judge).run()
+        state = Evolution(suite, backend, ws, opts, judge).run(locked=True)
     _print_status(state)
     print(f"\nmerged feedback: {merged}\nskills: {ws.skills}")
 
@@ -335,8 +369,19 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     suite = load_suite(args.suite, require_answers=False)
     task_id, count = record_feedback(suite, args.prompt, args.verdict, args.output, args.correct, args.note,
                                      args.file)
-    print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`"
-          + ("\nready: run `improve` to learn from them" if count >= MIN_NEW else ""))
+    print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`")
+    settings = load_settings(suite.root)
+    if count < (settings["min_new"] if settings else MIN_NEW):
+        return 0
+    if settings and not suite.human_review:
+        try:
+            start_improve(suite, settings)
+        except OSError as e:  # the row is recorded either way
+            log.warning("could not start improve in the background: %s", e)
+        else:
+            print(f"started: `improve` runs in the background (log: {background_log(settings)})")
+            return 0
+    print("ready: run `improve` to learn from them")  # never run before, human review, or the start failed
     return 0
 
 

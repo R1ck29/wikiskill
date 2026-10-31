@@ -36,6 +36,13 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 `improve` で実際の利用の記録が train / val に加わると、同じワークスペースで次の**ラウンド**が始まります。
 スキル・wiki・raw はそのまま残し、今のスキルで val を解き直したスコアを新しい R_best にして、反復番号を続けたまま K 回進めます
 （state.json の履歴に `new_tasks`、skill-impact.md に「タスクが変わったので以前のスコアとは比べられない」旨を記録）。
+`improve` はワークスペースのロックを持ったまま「取り込み → ラウンド」を繰り返すので、実行中に記録がたまれば続けて次のラウンドに入ります。
+
+利用者が何もしなくても回るように、`improve` は成功時に設定をスイートの `improve.json` に保存し、`feedback` は記録が
+`--min-new` 件に達すると同じ `improve` を `--wait` 付きの独立プロセスとして起動します（出力は `background.log`）。
+ワークスペースのロック（`evolve.lock`）は OS のファイルロックなので、強制終了やクラッシュでもプロセスが終われば外れ、手で消す必要はありません。
+`--wait` の実行は `improve.wait` のロックを持って 1 つだけ順番待ちし、2 つ目は「先に待っている実行が新しい記録も取り込む」ので何もせず終わります。
+記録の追加と取り込みは短いロック（スイートの `feedback.lock`）を順番に取るため、取り込み中に届いた記録も失われません。
 
 ### 各エージェントに見せる情報
 
@@ -58,11 +65,11 @@ wikiskill/
   proposer.py     スキル提案者（ReAct ループ、読み取り専用サンドボックス、提案の検証）
   scoring.py      採点（exact/contains/regex/number/script/llm_judge）とレビューシート
   review.py       ハイブリッド方式（1 回だけ人が確認 → 正解データ化）
-  improve.py      実際の利用からの改善（feedback の記録、タスクへの取り込み、フッター付きの書き出し）
+  improve.py      実際の利用からの改善（feedback の記録、タスクへの取り込み、improve の自動起動、フッター付きの書き出し）
   evaluate.py     任意のスキルでの評価と、対応ありブートストラップ検定
   skills.py       SKILL.md の検証（Agent Skills 仕様）、プロンプトへの埋め込み、提案の適用
   patching.py     append / replace / insert_after の部分編集と差分（wiki とスキルで共用）
-  workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、ロック、旧 gen-NNN 形式の解決
+  workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、OS のファイルロックと順番待ち、旧 gen-NNN 形式の解決
   config.py       suite.json / tasks.jsonl の読み込みと検証
   backends.py     claude / codex CLI の呼び出し（タイムアウト・中断時のプロセス停止、再試行）
   util.py         UTF-8 入出力、LLM 出力からの JSON 抽出、切り詰め、CSV のエスケープ

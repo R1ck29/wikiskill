@@ -1,13 +1,21 @@
-"""Small shared helpers: UTF-8 file I/O, JSON extraction from LLM text, truncation."""
+"""Small shared helpers: UTF-8 file I/O, file locks, JSON extraction from LLM text, truncation."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import shutil
 import tempfile
+import time
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 _FENCED_JSON = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 WINDOWS_RESERVED = {"con", "prn", "aux", "nul"} | {f"{p}{i}" for p in ("com", "lpt") for i in range(1, 10)}
@@ -68,6 +76,42 @@ def append_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "a", encoding="utf-8", newline="\n") as f:
         f.write(text)
+
+
+def try_lock(path: Path) -> IO[str] | None:
+    """Take the OS lock on `path` (created if missing), or None if another open file holds it.
+
+    The OS frees the lock when its process ends, however it ends, so a crash never leaves it held.
+    """
+    f = open(path, "a+", encoding="utf-8")  # noqa: SIM115 -- kept open while the lock is held
+    try:
+        if os.name == "nt":
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return None
+    return f
+
+
+def unlock(f: IO[str]) -> None:
+    if os.name == "nt":
+        f.seek(0)
+        msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+    f.close()  # also releases flock
+
+
+@contextlib.contextmanager
+def locked(path: Path, poll: float = 0.05) -> Iterator[None]:
+    """Hold the OS lock on `path`, waiting for it (for short critical sections)."""
+    while (f := try_lock(path)) is None:
+        time.sleep(poll)
+    try:
+        yield
+    finally:
+        unlock(f)
 
 
 def read_json(path: Path) -> Any:

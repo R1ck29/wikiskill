@@ -1,13 +1,18 @@
 import json
+import subprocess
+import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
+from tests.fakes import TempDirTest
 from wikiskill.config import ConfigError, load_suite
 from wikiskill.patching import PatchError, apply_edits, unified_diff
 from wikiskill.skills import SkillError, apply_proposal, load_skills, render_skill_section, validate_skill_md
 from wikiskill.util import extract_json_object, truncate
-from wikiskill.workspace import Workspace
+from wikiskill.workspace import LockBusy, Workspace
 
 SKILL = "---\nname: csv-cleaning\ndescription: Clean CSV numbers before summing.\n---\n# Steps\n1. Strip commas.\n"
 
@@ -213,12 +218,47 @@ class WorkspaceTest(unittest.TestCase):
                 ws.write_raw(2, {"A": "upper", "a": "lower"}, {})
             with ws.lock(), self.assertRaises(RuntimeError), ws.lock():  # a second run on the same workspace is refused
                 pass
-            self.assertFalse((ws.root / "evolve.lock").exists())
-            with ws.lock():
-                (ws.root / "evolve.lock").unlink()  # removed by hand during the run: still exits cleanly
+            with ws.lock():  # released afterwards
+                pass
             ws.save_state({"iteration": 1})
             self.assertEqual(ws.load_state(), {"iteration": 1})
 
 
-if __name__ == "__main__":
-    unittest.main()
+class LockTest(TempDirTest):
+    def setUp(self):
+        super().setUp()
+        self.ws = Workspace(self.root / "ws")
+        self.ws.init()
+
+    def test_a_crashed_holder_never_leaves_the_lock_held(self):
+        holder = subprocess.Popen(  # takes the lock, says so, then dies without releasing it
+            [sys.executable, "-c", "import os, sys; from wikiskill.util import try_lock; "
+             "f = try_lock(sys.argv[1]); print(f is not None, flush=True); sys.stdin.readline(); os._exit(9)",
+             str(self.ws.root / "evolve.lock")],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, cwd=str(Path(__file__).resolve().parent.parent))
+        self.assertEqual(holder.stdout.readline().strip(), "True")
+        with self.assertRaises(LockBusy), self.ws.lock():
+            pass
+        holder.stdin.close()
+        self.assertEqual(holder.wait(timeout=60), 9)
+        holder.stdout.close()
+        with self.ws.lock():  # the file stays; only the OS lock counts
+            self.assertTrue((self.ws.root / "evolve.lock").exists())
+
+    def test_waiting_runs_queue_one_at_a_time(self):
+        order, queued = [], threading.Event()
+        with mock.patch("wikiskill.workspace.POLL_SECONDS", 0.05), \
+                mock.patch("wikiskill.workspace.log.info", lambda *a: queued.set()):  # logged once queued
+            with self.ws.lock():
+                waiter = threading.Thread(target=self._wait_and_run, args=(order,))
+                waiter.start()
+                self.assertTrue(queued.wait(timeout=30))
+                with self.assertRaises(LockBusy), self.ws.lock(wait=True):  # a second waiter is refused
+                    pass
+                order.append("first")
+            waiter.join(timeout=30)
+        self.assertEqual(order, ["first", "queued"])
+
+    def _wait_and_run(self, order):
+        with self.ws.lock(wait=True):
+            order.append("queued")

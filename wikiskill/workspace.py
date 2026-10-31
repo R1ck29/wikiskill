@@ -5,18 +5,24 @@
     skills/   Skill Layer - active skills; replaced only when a candidate passes gating
     runs/     rollout cache, proposals and candidates (lets an interrupted run resume)
     reviews/  CSV sheets for human review
-    state.json  loop progress;  run.log  log of evolve/improve;  evolve.lock  present while a run holds it
+    state.json  loop progress;  run.log  log of evolve/improve;  background.log  output of automatic improve runs
+    evolve.lock  locked by the running evolve/improve;  improve.wait  locked by the one improve queued behind it
 """
 from __future__ import annotations
 
 import contextlib
-import os
+import logging
 import shutil
+import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-from .util import read_json, write_json, write_text
+from .util import read_json, try_lock, unlock, write_json, write_text
+
+log = logging.getLogger(__name__)
+LOCK, WAIT = "evolve.lock", "improve.wait"
+POLL_SECONDS = 5.0  # how often a queued run checks whether the lock is free
 
 WIKI_SEED = {
     "index.md": "# Wiki Index\n\nOne line per pattern: PROBLEM + ROOT CAUSE + FIX.\n\n",
@@ -26,6 +32,10 @@ WIKI_SEED = {
         "Written by the harness after validation gating.\n\n"
     ),
 }
+
+
+class LockBusy(RuntimeError):
+    """Another process holds (or already waits for) the workspace lock."""
 
 
 class Workspace:
@@ -46,23 +56,30 @@ class Workspace:
                 write_text(self.wiki / name, text)
 
     @contextlib.contextmanager
-    def lock(self) -> Iterator[None]:
-        """Refuse a second `evolve` on the same workspace while one is running."""
-        path = self.root / "evolve.lock"
-        try:
-            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            raise RuntimeError(f"{path} exists: another evolve is running on this workspace. "
-                               "If none is (e.g. the computer crashed), delete the file and retry.") from None
-        try:
-            os.write(fd, str(os.getpid()).encode("ascii"))
-        finally:
-            os.close(fd)
+    def lock(self, wait: bool = False) -> Iterator[None]:
+        """Run alone on this workspace (an OS lock on evolve.lock, freed even when a run crashes).
+
+        Without `wait` a held lock raises LockBusy. With `wait` the run queues and waits for the lock;
+        only one run may queue, so a second one raises LockBusy (the queued run will see its work).
+        """
+        path = self.root / LOCK
+        held = try_lock(path)
+        if held is None and not wait:
+            raise LockBusy(f"another evolve or improve is running on this workspace ({path})")
+        if held is None:
+            slot = try_lock(self.root / WAIT)
+            if slot is None:
+                raise LockBusy(f"another run already waits for {path}")
+            try:
+                log.info("waiting for the run that holds %s", path)
+                while (held := try_lock(path)) is None:
+                    time.sleep(POLL_SECONDS)
+            finally:
+                unlock(slot)
         try:
             yield
         finally:
-            with contextlib.suppress(FileNotFoundError):
-                path.unlink()
+            unlock(held)
 
     # ----- state -------------------------------------------------------------
     def load_state(self) -> dict[str, Any] | None:
@@ -104,3 +121,4 @@ def resolve_workspace(root: Path) -> Workspace:
     """The workspace at `root`, or its newest gen-NNN folder (layout written by improve in 0.2.x)."""
     gens = sorted(p for p in Path(root).glob("gen-[0-9][0-9][0-9]") if p.is_dir())
     return Workspace(gens[-1] if gens else root)
+

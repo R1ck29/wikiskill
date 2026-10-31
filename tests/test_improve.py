@@ -2,6 +2,7 @@
 import contextlib
 import json
 import re
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -9,11 +10,23 @@ from unittest import mock
 from tests.fakes import FakeBackend, TempDirTest
 from tests.test_cli import run_cli
 from tests.test_evolve import write_suite
+from wikiskill import cli
 from wikiskill.config import load_suite
 from wikiskill.evolve import has_work, is_done
-from wikiskill.improve import FEEDBACK, MERGED, merge_pending, merge_ready, pending
+from wikiskill.improve import (
+    AUTO,
+    FEEDBACK,
+    MERGED,
+    background_log,
+    load_settings,
+    merge_pending,
+    merge_ready,
+    pending,
+    record_feedback,
+    start_improve,
+)
 from wikiskill.skills import EXPORT_MARK
-from wikiskill.util import read_text
+from wikiskill.util import read_text, try_lock, unlock
 from wikiskill.workspace import Workspace
 
 FEEDBACK_HEADING = "## Feedback for automatic improvement"
@@ -127,18 +140,24 @@ class ImproveTest(TempDirTest):
         self.suite = write_suite(self.root / "suite")
         self.ws = self.root / "ws"
         self.dest = self.root / "home" / "skills"
-        patcher = mock.patch("wikiskill.cli.make_backend", lambda *a, **k: FakeBackend())
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.started = mock.Mock()  # stands in for the background run, which tests start by hand
+        for target, value in (("wikiskill.cli.make_backend", lambda *a, **k: FakeBackend()),
+                              ("wikiskill.cli.start_improve", self.started)):
+            patcher = mock.patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def improve(self, *argv):
         return run_cli("improve", self.suite, "--workspace", self.ws, "--export", self.dest, "--workers", 1, *argv)
 
     def add_feedback(self, n, output="TOTAL"):
+        outs = []
         for i in range(n):
             code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", f"real {i} {output}",
                                 "--output", output)
             self.assertEqual(code, 0, out)
+            outs.append(out)
+        return outs
 
     def state(self):
         return Workspace(self.ws).load_state()
@@ -158,8 +177,9 @@ class ImproveTest(TempDirTest):
         self.assertIn("nothing to do: 2", self.improve()[1])  # below --min-new 3
 
         code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", "real 9", "--output", "TOTAL")
-        self.assertIn("ready: run `improve`", out)  # the third row tells the caller to run improve
-        code, out = self.improve()
+        self.assertIn("started: `improve` runs in the background", out)  # the third row starts improve itself
+        self.started.assert_called_once()
+        code, out = self.improve()  # what the background run does
         self.assertEqual(code, 0, out)
         self.assertIn("merged feedback: 3", out)
         self.assertEqual(list(self.ws.glob("gen-*")), [])  # no copies: the same workspace goes on
@@ -176,6 +196,66 @@ class ImproveTest(TempDirTest):
         self.assertEqual(state["r_best"], 1.0)  # the kept skill already solves the new tasks
         self.assertIn(f"## Round 2: tasks updated before iteration {first['iteration']}",
                       read_text(self.ws / "wiki" / "skill-impact.md"))
+
+    def test_the_automatic_start_repeats_the_saved_improve(self):
+        self.add_feedback(2)  # before the first improve nothing knows how to run it: the caller is told to
+        self.assertIn("ready: run `improve`", self.add_feedback(1)[-1])
+        self.started.assert_not_called()
+        self.assertEqual(self.improve("--model", "m1", "--min-new", 2)[0], 0)
+        settings = load_settings(self.suite)
+        self.assertEqual((settings["workspace"], settings["min_new"]), (str(self.ws.resolve()), 2))
+        self.assertIn(str(self.dest.resolve()), settings["args"])
+        self.assertEqual(self.add_feedback(1)[-1].count("started"), 0)  # 1 of --min-new 2
+        out = self.add_feedback(1)[-1]
+        self.assertIn(f"log: {self.ws.resolve() / 'background.log'}", out)
+        suite, saved = self.started.call_args[0]
+        self.assertEqual((suite.root, saved), (self.suite.resolve(), settings))
+        code, out = run_cli("improve", self.suite, "--workspace", saved["workspace"], "--min-new", 2,
+                            *saved["args"], "--wait")  # the command start_improve runs
+        self.assertEqual(code, 0, out)
+        self.assertIn("merged feedback: 2", out)
+        self.assertIn("exported report-total", out)
+
+    def test_human_review_turns_the_automatic_start_off(self):
+        self.assertEqual(self.improve()[0], 0)
+        self.assertTrue((self.suite / AUTO).is_file())
+        cfg = json.loads(read_text(self.suite / "suite.json"))
+        (self.suite / "suite.json").write_text(json.dumps({**cfg, "human_review": True}), encoding="utf-8")
+        self.assertEqual(self.improve()[0], 0)  # nothing to do, so nobody is asked to score yet
+        self.assertFalse((self.suite / AUTO).exists())
+        self.assertIn("ready: run `improve`", self.add_feedback(3)[-1])
+        self.started.assert_not_called()
+
+    def test_feedback_recorded_during_a_round_starts_the_next_one(self):
+        real_round = cli._evolve_round
+
+        def round_with_feedback(args, ws, merged):
+            if not pending(self.suite) and self.state() is None:  # while the first round runs
+                self.add_feedback(3)
+            real_round(args, ws, merged)
+
+        with mock.patch("wikiskill.cli._evolve_round", round_with_feedback):
+            code, out = self.improve()
+        self.assertEqual(code, 0, out)
+        self.assertEqual(out.count("merged feedback:"), 2)
+        self.assertIn("merged feedback: 3", out)
+        self.assertEqual(pending(self.suite), [])
+        self.assertEqual(self.state()["history"][-1]["outcome"], "new_tasks")
+
+    def test_a_queued_run_steps_aside_for_the_one_already_waiting(self):
+        Workspace(self.ws).init()
+        running, waiting = try_lock(self.ws / "evolve.lock"), try_lock(self.ws / "improve.wait")
+        try:
+            code, out = self.improve("--wait")
+            self.assertEqual(code, 0, out)
+            self.assertIn("already waits", out)
+            self.assertIsNone(self.state())
+            code, out = self.improve()
+            self.assertEqual(code, 1, out)  # without --wait a running workspace is an error
+            self.assertIn("another evolve or improve is running", out)
+        finally:
+            unlock(running)
+            unlock(waiting)
 
     def test_a_new_round_runs_more_iterations_with_continued_numbers(self):
         self.assertEqual(self.improve()[0], 0)
@@ -247,6 +327,22 @@ class ImproveTest(TempDirTest):
         self.assertEqual(len(read_text(self.suite / MERGED).splitlines()), 1)
         self.assertEqual(pending(self.suite), [])
 
+    def test_feedback_recorded_while_merging_is_never_lost(self):
+        suite = load_suite(self.suite, require_answers=False)
+        writers = [threading.Thread(target=record_feedback, args=(suite, f"p{i}", "good", "TOTAL"))
+                   for i in range(12)]
+        merged = 0
+        for w in writers:
+            w.start()
+        while any(w.is_alive() for w in writers):
+            merged += merge_pending(self.suite, self.suite / "tasks.jsonl")
+        for w in writers:
+            w.join()
+        merged += merge_pending(self.suite, self.suite / "tasks.jsonl")
+        self.assertEqual(merged, 12)
+        self.assertEqual(len(load_suite(self.suite).tasks), 8 + 12)
+        self.assertEqual(len(read_text(self.suite / MERGED).splitlines()), 12)
+
     def test_nothing_to_do_still_exports_and_takes_over_manual_exports(self):
         self.assertEqual(self.improve()[0], 0)
         exported = self.dest / "report-total" / "SKILL.md"
@@ -270,6 +366,19 @@ class ImproveTest(TempDirTest):
         self.assertEqual(code, 0, out)
         self.assertIn("skip report-total", out)
         self.assertEqual(read_text(foreign), "my own skill")
+
+
+class BackgroundStartTest(TempDirTest):
+    def test_the_detached_run_finds_the_package_and_logs_its_output(self):
+        suite = write_suite(self.root / "suite")
+        settings = {"workspace": str(self.root / "ws"), "min_new": 3,
+                    "args": ["--backend-config", str(self.root / "missing.json"), "--workers", "1"]}
+        process = start_improve(load_suite(suite), settings)  # fails at once, before any model call
+        self.assertEqual(process.wait(timeout=120), 2)
+        log = read_text(background_log(settings))
+        self.assertIn("started by feedback", log)
+        self.assertRegex(log, r"error: .*missing\.json")  # printed by the improve command itself
+        self.assertIsNone(load_settings(suite))  # a failed run is never repeated automatically
 
 
 if __name__ == "__main__":
