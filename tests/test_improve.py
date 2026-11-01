@@ -2,6 +2,8 @@
 import contextlib
 import json
 import re
+import subprocess
+import sys
 import threading
 import unittest
 from pathlib import Path
@@ -11,12 +13,14 @@ from tests.fakes import FakeBackend, TempDirTest
 from tests.test_cli import run_cli
 from tests.test_evolve import write_suite
 from wikiskill import cli
-from wikiskill.config import load_suite
+from wikiskill.backends import Budget, BudgetExceeded
+from wikiskill.config import ConfigError, load_suite
 from wikiskill.evolve import has_work, is_done
 from wikiskill.improve import (
     AUTO,
     FEEDBACK,
     MERGED,
+    automatic_options,
     background_log,
     load_settings,
     merge_pending,
@@ -24,6 +28,7 @@ from wikiskill.improve import (
     pending,
     record_feedback,
     start_improve,
+    trim_log,
 )
 from wikiskill.skills import EXPORT_MARK
 from wikiskill.util import read_text, try_lock, unlock
@@ -210,11 +215,97 @@ class ImproveTest(TempDirTest):
         self.assertIn(f"log: {self.ws.resolve() / 'background.log'}", out)
         suite, saved = self.started.call_args[0]
         self.assertEqual((suite.root, saved), (self.suite.resolve(), settings))
+        options = automatic_options(saved)
+        self.assertEqual((options["--model"], options["--daily-budget"]), ("claude-sonnet-5-5", "10.0"))
         code, out = run_cli("improve", self.suite, "--workspace", saved["workspace"], "--min-new", 2,
-                            *saved["args"], "--wait")  # the command start_improve runs
+                            *[item for pair in options.items() for item in pair], "--wait")  # what start_improve runs
         self.assertEqual(code, 0, out)
         self.assertIn("merged feedback: 2", out)
         self.assertIn("exported report-total", out)
+
+    def test_automatic_runs_use_sonnet_on_claude_and_keep_a_saved_budget(self):
+        options = automatic_options({"args": ["--backend", "codex", "--model", "gpt-x", "--daily-budget", "2.5"]})
+        self.assertEqual(options, {"--backend": "codex", "--model": "gpt-x", "--daily-budget": "2.5"})
+        self.assertEqual(automatic_options({"args": []}), {"--model": "claude-sonnet-5-5", "--daily-budget": "10.0"})
+        for bad in ("-1", "0", "nan", "inf", "abc"):  # a hand-edited improve.json
+            self.assertEqual(automatic_options({"args": ["--daily-budget", bad]})["--daily-budget"], "10.0")
+
+    def test_a_spent_budget_pauses_improve_and_feedback(self):
+        self.assertEqual(self.improve()[0], 0)
+        Budget(Workspace(self.ws).spend_path, 1.0).add(1.5)
+        self.add_feedback(2)
+        self.assertIn("started", self.add_feedback(1)[-1])  # $1.50 of the automatic $10 is spent
+        self.started.assert_called_once()
+        Budget(Workspace(self.ws).spend_path, 1.0).add(9.0)
+        out = self.add_feedback(1)[-1]
+        self.assertIn("paused: today's budget of $10.00 is spent ($10.50)", out)
+        self.started.assert_called_once()  # not started again
+        code, out = self.improve("--daily-budget", 10)
+        self.assertEqual(code, 0, out)
+        self.assertIn("paused:", out)
+        self.assertEqual(len(pending(self.suite)), 4)  # nothing merged or run
+        self.assertIn("--daily-budget", load_settings(self.suite)["args"])  # a pause is no failure
+        code, out = self.improve("--daily-budget", 20)
+        self.assertEqual(code, 0, out)
+        self.assertIn("merged feedback: 4", out)
+
+    def test_a_round_paused_after_the_merge_resumes_with_the_next_single_row(self):
+        self.assertEqual(self.improve()[0], 0)
+        self.add_feedback(3)
+        with mock.patch("wikiskill.cli._evolve_round", side_effect=BudgetExceeded("today's budget is spent")):
+            self.assertIn("paused:", self.improve("--daily-budget", 10)[1])
+        self.assertEqual(pending(self.suite), [])  # the rows are merged: the queue alone would wait for 3 more
+        self.started.reset_mock()
+        self.assertIn("started", self.add_feedback(1)[-1])  # the unfinished round starts again at once
+        self.started.assert_called_once()
+        self.assertIn("merged feedback: 0", self.improve()[1])  # and finishes
+        self.started.reset_mock()
+        self.add_feedback(1)
+        self.started.assert_not_called()  # a finished round waits for --min-new rows again
+        Workspace(self.ws).state_path.write_text("{broken", encoding="utf-8")
+        self.assertIn("recorded", self.add_feedback(1)[-1])  # a damaged state never blocks recording
+
+    def test_a_budget_spent_mid_round_keeps_the_progress_and_exports(self):
+        real_round = cli._evolve_round
+
+        def round_until_spent(args, ws, merged, budget):
+            real_round(args, ws, merged, budget)
+            raise BudgetExceeded("today's budget of $1.00 is spent ($1.20)")
+
+        with mock.patch("wikiskill.cli._evolve_round", round_until_spent):
+            code, out = self.improve("--daily-budget", 1)
+        self.assertEqual(code, 0, out)
+        self.assertIn("paused: today's budget of $1.00 is spent", out)
+        self.assertIn("exported report-total", out)
+        self.assertIsNotNone(self.state())
+
+    def test_a_failed_improve_is_reported_by_the_next_feedback(self):
+        self.assertEqual(self.improve()[0], 0)
+        self.add_feedback(3)
+        with mock.patch("wikiskill.cli._evolve_round", side_effect=RuntimeError("claude exited 1: quota")):
+            code, out = self.improve()
+        self.assertEqual(code, 1, out)
+        error = load_settings(self.suite)["last_error"]
+        self.assertEqual(error["message"], "claude exited 1: quota")
+        out = self.add_feedback(3)[-1]
+        self.assertIn(f"warning: the last improve failed at {error['time']}: ", out)
+        self.assertIn("started", out)  # the cause may be gone: the next run is still started
+        self.assertEqual(self.improve()[0], 0)
+        self.assertNotIn("last_error", load_settings(self.suite))  # a successful run clears it
+        self.assertNotIn("warning", self.add_feedback(1)[-1])
+
+    def test_a_failure_is_recorded_for_a_suite_json_path_and_never_hides_the_error(self):
+        self.assertEqual(self.improve()[0], 0)
+        self.add_feedback(3)
+        with mock.patch("wikiskill.cli._evolve_round", side_effect=ConfigError("bad rubric")):
+            code, _ = run_cli("improve", self.suite / "suite.json", "--workspace", self.ws, "--workers", 1)
+        self.assertEqual(code, 2)
+        self.assertEqual(load_settings(self.suite)["last_error"]["message"], "bad rubric")
+        with mock.patch("wikiskill.cli._evolve_round", side_effect=ConfigError("bad rubric")), \
+                mock.patch("wikiskill.improve.write_json", side_effect=OSError("disk full")):
+            code, out = self.improve()
+        self.assertEqual(code, 2)  # the original error and its exit code, not the failed note
+        self.assertIn("error: bad rubric", out)
 
     def test_human_review_turns_the_automatic_start_off(self):
         self.assertEqual(self.improve()[0], 0)
@@ -229,10 +320,10 @@ class ImproveTest(TempDirTest):
     def test_feedback_recorded_during_a_round_starts_the_next_one(self):
         real_round = cli._evolve_round
 
-        def round_with_feedback(args, ws, merged):
+        def round_with_feedback(args, ws, merged, budget):
             if not pending(self.suite) and self.state() is None:  # while the first round runs
                 self.add_feedback(3)
-            real_round(args, ws, merged)
+            real_round(args, ws, merged, budget)
 
         with mock.patch("wikiskill.cli._evolve_round", round_with_feedback):
             code, out = self.improve()
@@ -379,6 +470,32 @@ class BackgroundStartTest(TempDirTest):
         self.assertIn("started by feedback", log)
         self.assertRegex(log, r"error: .*missing\.json")  # printed by the improve command itself
         self.assertIsNone(load_settings(suite))  # a failed run is never repeated automatically
+
+    def test_a_usage_error_of_the_detached_run_reaches_its_log(self):
+        log = self.root / "background.log"
+        result = subprocess.run([sys.executable, "-m", "wikiskill", "improve", str(self.root), "--workspace",
+                                 str(self.root / "ws"), f"--log={log}", "--no-such-option"],
+                                cwd=str(Path(cli.__file__).resolve().parent.parent), capture_output=True, text=True,
+                                check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, "")
+        self.assertIn("unrecognized arguments: --no-such-option", read_text(log))
+
+    def test_a_long_log_keeps_only_its_last_whole_lines(self):
+        log = self.root / "background.log"
+        log.write_bytes(b"".join(b"line %04d\n" % i for i in range(1000)))  # 10 bytes a line
+        trim_log(log, limit=20000)
+        self.assertEqual(log.stat().st_size, 10000)
+        last_lines = b"".join(b"line %04d\n" % i for i in range(991, 1000))
+        trim_log(log, limit=5000, keep=95)
+        self.assertEqual(log.read_bytes(), last_lines)
+        log.write_bytes(b"x" * 6000 + b"\n" + last_lines)
+        trim_log(log, limit=5000, keep=90)  # the cut is already at a line start: no line is lost
+        self.assertEqual(log.read_bytes(), last_lines)
+        log.write_bytes(b"x" * 6000)
+        trim_log(log, limit=5000, keep=90)  # no whole line in the tail
+        self.assertEqual(log.read_bytes(), b"")
+        trim_log(self.root / "missing.log")  # nothing to do
 
 
 if __name__ == "__main__":

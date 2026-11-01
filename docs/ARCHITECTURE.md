@@ -42,6 +42,13 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 `--min-new` 件に達すると同じ `improve` を `--wait` 付きの独立プロセスとして起動します（出力は `background.log`）。
 ワークスペースのロック（`evolve.lock`）は OS のファイルロックなので、強制終了やクラッシュでもプロセスが終われば外れ、手で消す必要はありません。
 `--wait` の実行は `improve.wait` のロックを持って 1 つだけ順番待ちし、2 つ目は「先に待っている実行が新しい記録も取り込む」ので何もせず終わります。
+自動の実行は claude では Sonnet 5.5 を使い、1 日の上限（`--daily-budget`、既定 10 ドル）を `backends.Budget` が守ります。
+各呼び出しが報告する費用をワークスペースの `spend.json` に足し、上限に達すると次の呼び出しの前に `BudgetExceeded` で止めます
+（再試行も採点もせず、完了した段階はそのまま残るので、次の実行が続きから進めます）。途中で止まったラウンドがあれば、`feedback` は
+`--min-new` 件を待たずに次の 1 件で `improve` を起動します（`improve.unfinished_round`）。費用を報告しない codex は 1 日 1 回にします。
+ラウンドの途中で別のモデル（または別の採点モデル）に変わったときは、ゲートを通す前に（その反復のゲートが決まった後なら次の反復の前に）今のスキルで val を採点し直して R_best にするので、
+ゲートが別のモデルの点数と比べることはありません。失敗した `improve` は `improve.json` に時刻と原因を残し、次の `feedback` が知らせます。
+自動の実行は `--log` で受け取った `background.log` を自分で追記モードで開くので（Windows でも末尾に書く）、起動のたびに大きくなりすぎた分を詰められます。
 記録の追加と取り込みは短いロック（スイートの `feedback.lock`）を順番に取るため、取り込み中に届いた記録も失われません。
 
 ### 各エージェントに見せる情報
@@ -59,19 +66,19 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 ```
 wikiskill/
   cli.py          コマンド定義と終了コード
-  evolve.py       Algorithm 1 の反復ループとステージ管理（再開・人のレビュー待ち・タスク追加後の続行・ワークスペースのロック）
+  evolve.py       Algorithm 1 の反復ループとステージ管理（再開・人のレビュー待ち・タスク追加後の続行・モデルが変わったときの R_best の採点し直し・ワークスペースのロック）
   rollout.py      推論エージェントの実行（一時フォルダ・並列実行・結果キャッシュ・実行記録の整形）
   maintainer.py   Wiki メンテナ（記録の抽出、プロンプト作成、JSON 編集の適用）
   proposer.py     スキル提案者（ReAct ループ、読み取り専用サンドボックス、提案の検証）
   scoring.py      採点（exact/contains/regex/number/script/llm_judge）とレビューシート
   review.py       ハイブリッド方式（1 回だけ人が確認 → 正解データ化）
-  improve.py      実際の利用からの改善（feedback の記録、タスクへの取り込み、improve の自動起動、フッター付きの書き出し）
+  improve.py      実際の利用からの改善（feedback の記録、タスクへの取り込み、improve の自動起動とそのモデル・上限、失敗の記録、ログの切り詰め、フッター付きの書き出し）
   evaluate.py     任意のスキルでの評価と、対応ありブートストラップ検定
   skills.py       SKILL.md の検証（Agent Skills 仕様）、プロンプトへの埋め込み、提案の適用
   patching.py     append / replace / insert_after の部分編集と差分（wiki とスキルで共用）
   workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、OS のファイルロックと順番待ち、旧 gen-NNN 形式の解決
   config.py       suite.json / tasks.jsonl の読み込みと検証
-  backends.py     claude / codex CLI の呼び出し（タイムアウト・中断時のプロセス停止、再試行）
+  backends.py     claude / codex CLI の呼び出し（タイムアウト・中断時のプロセス停止、再試行、報告された費用での 1 日の上限）
   util.py         UTF-8 入出力、LLM 出力からの JSON 抽出、切り詰め、CSV のエスケープ
   prompts/        Wiki メンテナとスキル提案者のシステムプロンプト（論文付録 E.2 / E.3）
 ```

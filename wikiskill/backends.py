@@ -14,6 +14,9 @@ Two calls are needed:
 Prompts are sent on stdin and long system prompts through files, so only short
 flags appear on the command line (Windows limits command lines to 32k chars and
 .cmd shims mangle special characters).
+
+A `Budget` caps what one day of budgeted (automatic) runs may spend, measured from the
+cost each CLI call reports.
 """
 from __future__ import annotations
 
@@ -27,12 +30,13 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from .config import ConfigError
-from .util import read_json
+from .util import read_json, write_json
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +75,70 @@ class BackendError(RuntimeError):
 
 class StoppedError(BackendError):
     """The run was stopped by the user (Ctrl+C); never retried."""
+
+
+class BudgetExceeded(RuntimeError):
+    """Today's budget is spent: the run stops (not retried, nothing scored) and resumes from its saved stage."""
+
+
+class Budget:
+    """A daily limit in USD for budgeted runs, kept in a ledger file (<workspace>/spend.json).
+
+    Spend is the cost each CLI call reports. A CLI that reports none (codex) cannot be
+    measured, so it gets one budgeted run a day instead.
+    """
+
+    def __init__(self, path: Path, limit: float) -> None:
+        self.path, self.limit = Path(path), limit
+        self._lock = threading.Lock()  # rollout workers share one budget
+
+    def today(self) -> dict[str, Any]:
+        """Today's ledger: spend in USD, calls that reported no cost, and runs started."""
+        try:
+            data = read_json(self.path)
+        except (OSError, ValueError):
+            data = None
+        day = {"date": time.strftime("%Y-%m-%d"), "usd": 0.0, "unpriced_calls": 0, "runs": 0}
+        if isinstance(data, dict) and data.get("date") == day["date"]:
+            for key, default in day.items():
+                if isinstance(data.get(key), type(default)):
+                    day[key] = data[key]
+        return day
+
+    def blocked(self) -> str | None:
+        """Why no new budgeted run may start today, or None."""
+        day = self.today()
+        if day["usd"] >= self.limit:
+            return self._spent(day)
+        if day["unpriced_calls"] and day["runs"]:
+            return "the CLI reports no cost, so budgeted runs are limited to one a day"
+        return None
+
+    def start_run(self) -> None:
+        with self._lock:
+            reason = self.blocked()
+            if reason:
+                raise BudgetExceeded(reason)
+            day = self.today()
+            write_json(self.path, {**day, "runs": day["runs"] + 1})
+
+    def check(self) -> None:
+        """Raise BudgetExceeded before a call once today's spend reached the limit."""
+        day = self.today()
+        if day["usd"] >= self.limit:
+            raise BudgetExceeded(self._spent(day))
+
+    def _spent(self, day: dict[str, Any]) -> str:
+        return f"today's budget of ${self.limit:.2f} is spent (${day['usd']:.2f})"
+
+    def add(self, usd: float | None) -> None:
+        with self._lock:
+            day = self.today()
+            if usd is None:
+                day["unpriced_calls"] += 1
+            else:
+                day["usd"] = round(day["usd"] + usd, 6)
+            write_json(self.path, day)
 
 
 @dataclass(frozen=True)
@@ -120,8 +188,11 @@ def load_backend_config(kind: str, model: str | None = None,
 class CLIBackend:
     """Shared subprocess handling; subclasses build arguments and parse output."""
 
-    def __init__(self, config: BackendConfig) -> None:
+    reports_cost = False  # does the CLI report the cost of each call (see Budget)?
+
+    def __init__(self, config: BackendConfig, budget: Budget | None = None) -> None:
         self.config = config
+        self.budget = budget
 
     @property
     def name(self) -> str:
@@ -130,15 +201,25 @@ class CLIBackend:
     def complete(self, prompt: str, system: str | None = None) -> str:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
             args, stdin = self._complete_args(prompt, system, Path(tmp))
-            return self._retry(lambda: self._parse_complete(self._run(args, stdin, Path(tmp))))
+            return self._retry(lambda: self._call(args, stdin, Path(tmp), self._parse_complete))
 
     def run_agent(self, prompt: str, system: str | None, cwd: Path) -> AgentResult:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
             args, stdin = self._agent_args(prompt, system, Path(cwd), Path(tmp))
             try:
-                return self._retry(lambda: self._parse_agent(self._run(args, stdin, Path(cwd))))
+                return self._retry(lambda: self._call(args, stdin, Path(cwd), self._parse_agent))
             except BackendError as e:
                 return AgentResult("", f"(agent run failed: {e})", ok=False, error=str(e), infra_error=True)
+
+    def _call(self, args: list[str], stdin: str, cwd: Path, parse: Callable):
+        if self.budget:
+            self.budget.check()
+        stdout = self._run(args, stdin, cwd)
+        cost = self._cost(stdout)
+        # calls that fail with output cost too; a cut-off call of a CLI that reports costs adds nothing
+        if self.budget and (cost is not None or not self.reports_cost):
+            self.budget.add(cost)
+        return parse(stdout)
 
     # ----- subprocess ----------------------------------------------------------
     def _run(self, args: list[str], stdin: str, cwd: Path) -> str:
@@ -179,6 +260,10 @@ class CLIBackend:
 
     def _parse_agent(self, stdout: str) -> AgentResult:
         raise NotImplementedError
+
+    def _cost(self, stdout: str) -> float | None:
+        """USD the call reports, or None when the CLI reports no cost."""
+        return None
 
 
 def run_process(argv: list[str], stdin: str, cwd: Path, timeout: float) -> tuple[int | None, str, str]:
@@ -267,6 +352,8 @@ def _block(text: str) -> str:
 class ClaudeBackend(CLIBackend):
     """`claude -p`: system prompts via --system-prompt-file / --append-system-prompt-file."""
 
+    reports_cost = True
+
     def _complete_args(self, prompt, system, tmp):
         args = [*self.config.complete_args, *self._model_args()]
         if system:
@@ -278,6 +365,15 @@ class ClaudeBackend(CLIBackend):
         if system:  # keep Claude Code's own agent prompt, append the task prompt + skills
             args += ["--append-system-prompt-file", _write_prompt_file(tmp, "system.md", system)]
         return args, prompt
+
+    def _cost(self, stdout):
+        try:  # `--output-format json` prints one object, stream-json one event per line
+            events = [json.loads(stdout)]
+        except json.JSONDecodeError:
+            events = _json_lines(stdout)
+        result = next((e for e in reversed(events) if isinstance(e, dict) and e.get("type") == "result"), None)
+        cost = (result or {}).get("total_cost_usd")
+        return float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
 
     def _parse_complete(self, stdout):
         try:
@@ -374,6 +470,7 @@ def _render_codex_item(item: dict) -> str:
 BACKENDS = {"claude": ClaudeBackend, "codex": CodexBackend}
 
 
-def make_backend(kind: str, model: str | None = None, config_path: Path | None = None) -> CLIBackend:
-    return BACKENDS[kind](load_backend_config(kind, model, config_path))
+def make_backend(kind: str, model: str | None = None, config_path: Path | None = None,
+                 budget: Budget | None = None) -> CLIBackend:
+    return BACKENDS[kind](load_backend_config(kind, model, config_path), budget)
 

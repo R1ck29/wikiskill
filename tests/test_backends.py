@@ -5,10 +5,11 @@ import sys
 import tempfile
 import time
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
-from wikiskill.backends import BackendError, load_backend_config, make_backend
+from wikiskill.backends import BackendError, Budget, BudgetExceeded, load_backend_config, make_backend
 from wikiskill.config import ConfigError
 
 FAKE_CLI = Path(__file__).with_name("fake_cli.py")
@@ -192,6 +193,61 @@ class FailureTest(FakeCLITestCase):
                 load_backend_config("claude", model=bad_model)
         self.assertEqual(load_backend_config("claude", model="arn:aws:bedrock:us-east-1:1:x/y").model,
                          "arn:aws:bedrock:us-east-1:1:x/y")
+
+
+class BudgetTest(FakeCLITestCase):
+    def setUp(self):
+        super().setUp()
+        self.ledger = Path(self.tmp.name) / "spend.json"
+
+    def test_reported_costs_add_up_and_stop_the_next_call(self):
+        budget = Budget(self.ledger, 1.0)
+        backend = make_backend("claude", budget=budget)
+        backend.complete("a")  # 0.50, from --output-format json
+        backend.run_agent("b", None, self.workdir)  # 0.25, from the stream-json result event
+        self.assertEqual(budget.today()["usd"], 0.75)
+        backend.complete("c")  # starts below the limit, ends above it
+        self.assertEqual(budget.today()["usd"], 1.25)
+        with self.assertRaises(BudgetExceeded):  # not caught as an agent failure, never retried
+            backend.run_agent("d", None, self.workdir)
+        self.assertEqual(len(self.calls()), 3)
+        self.assertIn("$1.00 is spent", Budget(self.ledger, 1.0).blocked())
+        self.assertIsNone(Budget(self.ledger, 2.0).blocked())
+
+    def test_a_new_day_starts_from_zero(self):
+        self.ledger.write_text(json.dumps({"date": "2000-01-01", "usd": 99.0, "unpriced_calls": 3, "runs": 5}),
+                               encoding="utf-8")
+        budget = Budget(self.ledger, 1.0)
+        self.assertEqual(budget.today()["usd"], 0.0)
+        budget.start_run()
+        self.assertEqual(budget.today()["runs"], 1)
+        self.ledger.write_text("{broken", encoding="utf-8")
+        self.assertEqual(budget.today()["usd"], 0.0)  # a damaged ledger never blocks forever
+
+    def test_a_cli_without_costs_gets_one_run_a_day(self):
+        budget = Budget(self.ledger, 1.0)
+        budget.start_run()
+        make_backend("codex", budget=budget).complete("a")
+        self.assertEqual(budget.today()["unpriced_calls"], 1)
+        self.assertIn("one a day", budget.blocked())
+        with self.assertRaises(BudgetExceeded):
+            budget.start_run()
+        make_backend("codex", budget=budget).complete("b")  # the run already going may finish
+        self.assertEqual(budget.today()["usd"], 0.0)
+
+    def test_a_cut_off_claude_call_never_counts_as_a_cli_without_costs(self):
+        budget = Budget(self.ledger, 1.0)
+        budget.start_run()
+        backend = make_backend("claude", budget=budget)
+        backend.config = replace(backend.config, retries=0)
+        backend._run = lambda *a: '{"type": "assistant"}\nplain text\n'  # killed mid-stream: no result event
+        self.assertTrue(backend.run_agent("a", None, self.workdir).infra_error)
+        self.assertEqual((budget.today()["usd"], budget.today()["unpriced_calls"]), (0.0, 0))
+        self.assertIsNone(budget.blocked())
+
+    def test_without_a_budget_nothing_is_recorded(self):
+        make_backend("claude").complete("a")
+        self.assertFalse(self.ledger.exists())
 
 
 if __name__ == "__main__":

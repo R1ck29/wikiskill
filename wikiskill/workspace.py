@@ -7,6 +7,7 @@
     reviews/  CSV sheets for human review
     state.json  loop progress;  run.log  log of evolve/improve;  background.log  output of automatic improve runs
     evolve.lock  locked by the running evolve/improve;  improve.wait  locked by the one improve queued behind it
+    spend.json  today's spend of budgeted (automatic) runs, see backends.Budget
 """
 from __future__ import annotations
 
@@ -47,6 +48,7 @@ class Workspace:
         self.runs = self.root / "runs"
         self.reviews = self.root / "reviews"
         self.state_path = self.root / "state.json"
+        self.spend_path = self.root / "spend.json"
 
     def init(self) -> None:
         for d in (self.raw, self.wiki / "patterns", self.skills, self.runs, self.reviews):

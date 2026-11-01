@@ -68,7 +68,8 @@ class Evolution:
         if not suite.split("train") or not suite.split("val"):
             raise ValueError("evolve needs at least one 'train' and one 'val' task")
         self.suite, self.backend, self.ws, self.opts = suite, backend, ws, opts
-        self.scorer = Scorer(suite, judge or backend)
+        self.judge = judge or backend
+        self.scorer = Scorer(suite, self.judge)
 
     # ----- driver ------------------------------------------------------------------
     def run(self, locked: bool = False) -> dict[str, Any]:
@@ -84,6 +85,8 @@ class Evolution:
         if state["r_best"] is None:
             self._score_start(state)
         while not is_done(state, self.opts.iterations):
+            if state.get("backend") != self._backend_name() and state["stage"] != "commit":
+                self._rescore_best(state)  # at commit the gate is decided: the next iteration re-scores
             self._iteration(state)
         if state["r_best"] >= 1.0:
             log.info("validation score is 1.0; nothing left to improve (Algorithm 1, line 4)")
@@ -92,7 +95,7 @@ class Evolution:
     def _load_state(self) -> dict[str, Any]:
         state = self.ws.load_state()
         if state is None:
-            state = {"suite": self.suite.name, "backend": getattr(self.backend, "name", "?"),
+            state = {"suite": self.suite.name, "backend": self._backend_name(),
                      "tasks": task_fingerprint(self.suite), "baseline": None, "r_best": None,
                      "iteration": 1, "stage": "rollout", "pending": None, "history": []}
             self.ws.save_state(state)
@@ -113,8 +116,24 @@ class Evolution:
             self.ws.save_state(state)
         return state
 
+    def _backend_name(self) -> str:
+        """The models behind the scores: the agent, and the LLM judge when it is another backend."""
+        name = getattr(self.backend, "name", "?")
+        return name if self.judge is self.backend else f"{name} (judge {getattr(self.judge, 'name', '?')})"
+
+    def _rescore_best(self, state: dict[str, Any]) -> None:
+        """The round goes on with another model (e.g. an automatic run): score R_best again on this one,
+        so the gate never compares this model's validation score with another model's."""
+        label = f"iter_{state['iteration']:03d}_rescore_val"
+        score = mean(self._score_split("val", load_skills(self.ws.skills), label, self.ws.stage_dir(label)))
+        log.info("backend changed from %s to %s: best validation score %.4f is now %.4f with the current skills",
+                 state.get("backend"), self._backend_name(), state["r_best"], score)
+        state.update(backend=self._backend_name(), r_best=score)
+        self.ws.save_state(state)
+
     def _score_start(self, state: dict[str, Any]) -> None:
         """R_best of a round: val with no skills at the start, with the current skills after a task change."""
+        state["backend"] = self._backend_name()
         k, first = state["iteration"], state["baseline"] is None
         label = "baseline_val" if first else f"iter_{k:03d}_new_tasks_val"
         score = mean(self._score_split("val", load_skills(self.ws.skills), label, self.ws.stage_dir(label)))

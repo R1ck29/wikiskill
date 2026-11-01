@@ -41,11 +41,12 @@ def main() -> None:
                 {"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}]}},
             {"type": "user", "message": {"content": [{"type": "tool_result", "content": "data.csv"}]}},
             {"type": "assistant", "message": {"content": [{"type": "text", "text": reply}]}},
-            {"type": "result", "subtype": "success", "is_error": False, "result": reply},
+            {"type": "result", "subtype": "success", "is_error": False, "result": reply, "total_cost_usd": 0.25},
         ]
         out.write("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in events))
     else:
-        out.write(json.dumps({"type": "result", "is_error": False, "result": reply}, ensure_ascii=False))
+        out.write(json.dumps({"type": "result", "is_error": False, "result": reply, "total_cost_usd": 0.5},
+                             ensure_ascii=False))
     out.flush()
     sys.exit(int(os.environ.get("FAKE_CLI_EXIT", "0")))
 

@@ -74,6 +74,38 @@ class EvolveLoopTest(unittest.TestCase):
         # resume re-used iteration 1 train rollouts: only val(2) + iter 2 train(4) + val(2) ran again
         self.assertEqual(backend.agent_calls - calls_before, 8)
 
+    def test_a_round_continued_on_another_model_scores_its_best_again(self):
+        suite = load_suite(write_suite(self.root / "suite"))
+        ws = Workspace(self.root / "ws")
+        with self.assertRaises(RuntimeError):
+            Evolution(suite, FakeBackend(crash_proposer_once=True), ws, self.opts).run()
+        other = FakeBackend()
+        other.name = "other-model"
+        with self.assertLogs("wikiskill.evolve", "INFO") as logs:
+            state = Evolution(suite, other, ws, self.opts).run()
+        self.assertIn("backend changed from fake to other-model", "\n".join(logs.output))
+        self.assertTrue(ws.stage_dir("iter_001_rescore_val").is_dir())  # val scored on the new model first
+        self.assertEqual(state["backend"], "other-model")
+        self.assertEqual([h["outcome"] for h in state["history"]], ["rejected", "accepted"])
+        calls = other.agent_calls
+        Evolution(suite, other, ws, self.opts).run()  # same model again: nothing re-scored
+        self.assertEqual(other.agent_calls, calls)
+
+    def test_a_round_resumed_at_commit_on_another_model_scores_its_best_before_the_next_gate(self):
+        suite = load_suite(write_suite(self.root / "suite"))
+        ws = Workspace(self.root / "ws")
+        with mock.patch("wikiskill.evolve._record_skill_impact", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            Evolution(suite, FakeBackend(), ws, self.opts).run()
+        self.assertEqual(ws.load_state()["stage"], "commit")
+        other = FakeBackend()
+        other.name = "other-model"
+        state = Evolution(suite, other, ws, self.opts).run()
+        self.assertFalse(ws.stage_dir("iter_001_rescore_val").exists())  # iteration 1 was gated already
+        self.assertTrue(ws.stage_dir("iter_002_rescore_val").is_dir())  # re-scored before iteration 2
+        self.assertEqual((state["backend"], [h["outcome"] for h in state["history"]]),
+                         ("other-model", ["rejected", "accepted"]))
+
     def test_human_review_pauses_and_can_be_switched_off(self):
         suite_dir = write_suite(self.root / "suite", human_review=True, with_answers=False)
         ws = Workspace(self.root / "ws")

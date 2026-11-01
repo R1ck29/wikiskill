@@ -81,6 +81,10 @@ Python を実行できない場合は、`skills/wikiskill` フォルダを `<既
 `improve` は成功するたびに自分の設定（ワークスペース・モデル・書き出し先など）をスイートの `improve.json` に保存し、
 `feedback` はその設定で `improve` を独立したプロセスとして起動します（会話や Claude を閉じても続き、出力は `<ワークスペース>/background.log`）。
 実行中に届いた記録は、終わった直後に次のラウンドとして続けて取り込みます。同時に動くのは 1 つだけで、実行中に起動された分は 1 つだけ順番待ちします。
+自動の実行は、claude では **Sonnet 5.5**（`claude-sonnet-5-5`）を使い、**1 日 10 ドル**までに抑えます（CLI が報告する実際の費用で数え、
+`improve --daily-budget` を指定して実行すればその額に変わります）。上限に達した時点で動いている呼び出しは最後まで走るので、少し超えることがあります。使い切ると区切りの良いところで止まり（`paused`）、
+翌日以降の最初の記録で続きから再開します（途中で止まったラウンドは、記録が `--min-new` 件たまるのを待たずに次の 1 件で再開します）。費用を報告しない codex では、自動の実行を 1 日 1 回にします。
+自動の実行が失敗すると、次の `feedback` が `warning: the last improve failed ...` と原因を表示します（`background.log` は 1 MB を超えると末尾 256 KB に詰めます）。
 自動で起動したくない場合は `improve.json` を消します（毎回人が判定するスイートでは起動せず、`ready` と表示して手動の `improve` を待ちます）。
 上書きするのは WikiSkill が書き出したスキルだけです（同じ名前の自作スキルは上書きせずに知らせます）。
 正解が無い「違う」は、採点方法が `llm_judge`（または `script`）のスイートでだけ記録できます（数値などの採点では正しい答えを一言聞きます）。
@@ -184,8 +188,8 @@ tasks.jsonl に正解と採点基準が書き込まれます（最初の元フ�
 | `status DIR` | 反復ごとの採否と検証スコアを表示 |
 | `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し（`--suite SUITE` で、結果の評価をそのスイートに記録する案内も付ける） |
 | `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー |
-| `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル）。記録が `--min-new` 件たまると、前回の `improve` と同じ設定で裏で起動 |
-| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上（初回はすべて）ならタスクに加えて `--iterations`（既定 3）回続ける（終わるまでに記録がまたたまれば次のラウンドへ）、なければスキルを書き出すだけ。`--wait` で実行中の処理の終了を待つ（0.2 の `gen-NNN` 形式のワークスペースは一番新しいものを使い続ける） |
+| `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル）。記録が `--min-new` 件たまると、前回の `improve` と同じ設定（claude ではモデルを Sonnet 5.5 に、1 日の上限つき）で裏で起動（止まったままのラウンドがあれば 1 件目で起動）。上限に達していれば `paused`、前回の `improve` が失敗していれば `warning` を表示 |
+| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上（初回はすべて）ならタスクに加えて `--iterations`（既定 3）回続ける（終わるまでに記録がまたたまれば次のラウンドへ）、なければスキルを書き出すだけ。`--wait` で実行中の処理の終了を待つ。`--daily-budget USD` でこのワークスペースの 1 日の費用に上限を付ける（手動の実行は指定しなければ上限なし）。0.2 の `gen-NNN` 形式のワークスペースは一番新しいものを使い続ける |
 
 モデルを使うコマンド（`check`・`evolve`・`improve`・`evaluate`・`review`）では `--backend claude|codex`、`--model`、
 `--judge-model`（llm_judge の採点モデル）、`--backend-config`（CLI の引数を変える。[docs/CONFIGURATION.md](docs/CONFIGURATION.md)）が使えます。
@@ -210,7 +214,8 @@ workspaces/sales/
   wiki/skill-impact.md                 すべての提案の差分・検証スコア・採否
   raw/iter_NNN/traces/*.md             train の実行記録（書き換えない）
   runs/  reviews/  state.json  run.log 再開用データ、レビューシート、進捗、ログ
-  background.log                       feedback が自動で起動した improve の出力
+  background.log                       feedback が自動で起動した improve の出力（1 MB を超えると末尾 256 KB に詰める）
+  spend.json                           上限つき（自動）の実行が今日使った費用
 ```
 
 `python -m wikiskill status workspaces/sales` で進捗を確認できます。
@@ -222,6 +227,11 @@ workspaces/sales/
 （`improve` で記録がタスクに加わるたびに、今のスキルでの val 件数分が加わります）。
 加えて Wiki メンテナが 1 回（応答が壊れていた場合は最大 3 回）、スキル提案者が最大 20 回のテキスト生成を行い、
 `llm_judge` 採点なら採点 1 件につき 1 回の呼び出しが増えます。まず少数のタスクと `--iterations 2` で試してください。
+
+自動の 1 ラウンド（`improve` の既定 3 反復）の目安は、付属の例で API 料金に換算して、翻訳（train 4・val 3 件）が
+Sonnet 5.5 で約 1〜3 ドル、売上分析（train 8・val 6 件、表計算をするエージェント）が約 4〜12 ドルです（Opus 5.5 ならその約 2 倍）。
+エージェントが何ターン動くかで大きく変わるため、自動の実行は推定ではなく CLI が報告する実際の費用（claude の `total_cost_usd`）で
+1 日の上限を守ります。サブスクリプションでログインした claude では、料金の代わりにプランの利用枠を使います。
 
 ## テスト
 

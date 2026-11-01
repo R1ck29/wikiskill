@@ -8,10 +8,14 @@
 `improve` also saves its settings to `<suite>/improve.json`; from then on the feedback row that
 fills the queue starts the same `improve` as a detached background process (`start_improve`),
 so a suite keeps improving without anyone running a command. Deleting improve.json stops that.
+Automatic runs use Sonnet 5.5 on the claude CLI and a daily budget (AUTO_BUDGET USD unless
+`improve --daily-budget` was saved); a spent budget pauses them until the next day. An improve
+that fails notes the error in improve.json (`record_failure`), and the next feedback reports it.
 """
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import secrets
@@ -23,8 +27,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from .backends import Budget
 from .config import ANSWER_REQUIRED, ConfigError, Suite
-from .evolve import is_done
+from .evolve import has_work, is_done
 from .skills import copy_skills, exported_by_wikiskill
 from .util import (
     append_text,
@@ -36,14 +41,19 @@ from .util import (
     write_json,
     write_text,
 )
+from .workspace import Workspace
 
 FEEDBACK = "feedback.jsonl"
 QUEUE_LOCK = "feedback.lock"  # held while the queue is appended to, read or merged
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
 AUTO = "improve.json"  # settings of the last improve, reused by the automatic start
 BACKGROUND_LOG = "background.log"  # output of automatic runs, in the workspace
+LOG_LIMIT, LOG_KEEP = 1 << 20, 1 << 18  # a background.log over 1 MB is cut to its last 256 KB
 FEEDBACK_FILES = "fb"  # input files of feedback rows: <files_dir>/fb/<id>/<name>
 MIN_NEW = 3  # pending feedback rows that start a new round (improve --min-new default)
+ITERATIONS = 3  # iterations per improve round (improve --iterations default)
+AUTO_MODEL = {"claude": "claude-sonnet-5-5"}  # model of automatic runs, per backend
+AUTO_BUDGET = 10.0  # USD a day for automatic runs unless `improve --daily-budget` was saved
 
 
 def feedback_row(scorer_type: str, prompt: str, verdict: str, output: str | None = None,
@@ -167,8 +177,22 @@ def load_settings(suite_root: Path) -> dict[str, Any] | None:
     except (OSError, ValueError):
         return None
     valid = (isinstance(data, dict) and isinstance(data.get("workspace"), str) and isinstance(data.get("min_new"), int)
-             and isinstance(data.get("args"), list))
+             and isinstance(data.get("args"), list) and isinstance(data.get("last_error", {}), dict))
     return data if valid else None
+
+
+def record_failure(suite: Path, message: str) -> None:
+    """Note a failed improve in the saved settings of `suite` (folder or suite.json); the next
+    successful improve clears it (save_settings). Never raises: the original error matters more."""
+    root = Path(suite) if Path(suite).is_dir() else Path(suite).parent
+    settings = load_settings(root)
+    if settings is None:
+        return
+    error = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "message": message[:500]}
+    try:
+        write_json(root / AUTO, {**settings, "last_error": error})
+    except OSError:
+        return
 
 
 def start_improve(suite: Suite, settings: dict[str, Any]) -> subprocess.Popen:
@@ -178,21 +202,73 @@ def start_improve(suite: Suite, settings: dict[str, Any]) -> subprocess.Popen:
     """
     log = background_log(settings)
     log.parent.mkdir(parents=True, exist_ok=True)
+    trim_log(log)
     package_root = str(Path(__file__).resolve().parent.parent)
     env = dict(os.environ, PYTHONIOENCODING="utf-8",
                PYTHONPATH=os.pathsep.join(p for p in (package_root, os.environ.get("PYTHONPATH")) if p))
+    options = [item for pair in automatic_options(settings).items() for item in pair]
     command = [sys.executable, "-m", "wikiskill", "improve", str(suite.root), "--workspace", settings["workspace"],
-               "--min-new", str(settings["min_new"]), *settings["args"], "--wait"]
+               "--min-new", str(settings["min_new"]), *options, "--wait", "--log", str(log)]
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     with open(log, "a", encoding="utf-8") as out:
         out.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} started by feedback ===\n")
-        out.flush()
-        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, env=env,
-                                cwd=package_root, start_new_session=os.name != "nt", creationflags=flags)
+    return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                            env=env, cwd=package_root, start_new_session=os.name != "nt", creationflags=flags)
+
+
+def automatic_options(settings: dict[str, Any]) -> dict[str, str]:
+    """The saved options with the policy of automatic runs: AUTO_MODEL, and AUTO_BUDGET unless one was saved."""
+    args = [str(a) for a in settings["args"]]
+    options = dict(zip(args[::2], args[1::2]))  # saved as --flag value pairs (_improve_args in cli.py)
+    model = AUTO_MODEL.get(options.get("--backend", "claude"))
+    if model:
+        options["--model"] = model
+    try:
+        budget = float(options["--daily-budget"])
+    except (KeyError, ValueError):
+        budget = math.nan
+    if not (math.isfinite(budget) and budget > 0):  # none saved, or a hand edit gone wrong
+        options["--daily-budget"] = str(AUTO_BUDGET)
+    return options
+
+
+def unfinished_round(settings: dict[str, Any], suite: Suite) -> bool:
+    """True when the saved workspace stopped inside a round (paused, interrupted or failed): the next
+    feedback row starts it again even with fewer than min_new rows waiting."""
+    try:
+        state = Workspace(Path(settings["workspace"])).load_state()
+        iterations = int(automatic_options(settings).get("--iterations", ITERATIONS))
+        return state is not None and has_work(state, suite, iterations)
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):  # damaged state: rows still count as usual
+        return False
+
+
+def automatic_budget(settings: dict[str, Any]) -> Budget:
+    """The budget the automatic run would spend from (the ledger lives in its workspace)."""
+    limit = float(automatic_options(settings)["--daily-budget"])
+    return Budget(Workspace(Path(settings["workspace"])).spend_path, limit)
 
 
 def background_log(settings: dict[str, Any]) -> Path:
     return Path(settings["workspace"]) / BACKGROUND_LOG
+
+
+def trim_log(path: Path, limit: int = LOG_LIMIT, keep: int = LOG_KEEP) -> None:
+    """Keep only the whole lines in the last `keep` bytes of a log that grew over `limit`.
+
+    Rewritten in place, not replaced: a run that still appends to it (`improve --log`) keeps
+    the same file and goes on writing at its new end.
+    """
+    try:
+        if path.stat().st_size <= limit:
+            return
+        with open(path, "rb") as f:
+            f.seek(-(keep + 1), os.SEEK_END)  # one byte more: is the cut already at a line start?
+            tail = f.read()
+        cut = tail.find(b"\n")
+        path.write_bytes(tail[cut + 1:] if cut >= 0 else b"")
+    except OSError:  # no log yet, or it cannot be written now: the start goes ahead either way
+        return
 
 
 def feedback_footer(suite_root: Path) -> str:

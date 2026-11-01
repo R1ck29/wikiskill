@@ -14,21 +14,25 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .backends import make_backend
+from .backends import Budget, BudgetExceeded, make_backend
 from .config import ConfigError, Suite, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import Evolution, EvolveOptions, has_work
 from .improve import (
+    ITERATIONS,
     MIN_NEW,
+    automatic_budget,
     background_log,
     export_skills,
     feedback_footer,
     load_settings,
     merge_ready,
     pending,
+    record_failure,
     record_feedback,
     save_settings,
     start_improve,
+    unfinished_round,
 )
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
@@ -46,6 +50,10 @@ def main(argv: list[str] | None = None) -> int:
     for stream in (sys.stdout, sys.stderr):  # Windows consoles may not be UTF-8
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="replace")
+    argv = sys.argv[1:] if argv is None else argv
+    log_path = _log_option(argv)
+    if log_path:  # before parsing, so even a usage error reaches the log of an automatic run
+        sys.stdout = sys.stderr = open(log_path, "a", encoding="utf-8", errors="replace", buffering=1)  # noqa: SIM115
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S")
     try:
@@ -60,6 +68,18 @@ def main(argv: list[str] | None = None) -> int:
     except (RuntimeError, OSError) as e:  # CLI/model failures, locks, disk errors: run again to resume
         print(f"error: {e}", file=sys.stderr)
         return EXIT_ERROR
+
+
+def _log_option(argv: list[str]) -> Path | None:
+    """`improve --log FILE` (or --log=FILE). Opened by this process: only its own handle appends on Windows."""
+    if not argv or argv[0] != "improve":
+        return None
+    for i, arg in enumerate(argv):
+        if arg.startswith("--log="):
+            return _path(arg[len("--log="):])
+        if arg == "--log" and i + 1 < len(argv):
+            return _path(argv[i + 1])
+    return None
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -95,12 +115,16 @@ def _add_run_commands(sub: Any) -> None:
     p.add_argument("--workspace", type=_path, required=True, help="workspace folder (kept across rounds)")
     _backend_args(p)
     _run_args(p)
-    p.add_argument("--iterations", type=int, default=3, help="iterations per round (default %(default)s)")
+    p.add_argument("--iterations", type=int, default=ITERATIONS, help="iterations per round (default %(default)s)")
     p.add_argument("--min-new", type=int, default=MIN_NEW,
                    help="pending feedback rows needed to start a new round (default %(default)s)")
     p.add_argument("--export", type=_path, help="also copy the skills here, e.g. ~/.claude/skills")
     p.add_argument("--wait", action="store_true",
                    help="wait for a run that holds the workspace instead of failing (used by the automatic start)")
+    p.add_argument("--daily-budget", type=_usd, metavar="USD",
+                   help="stop for the day once budgeted runs of this workspace spent this much "
+                        "(as reported by the CLI; the automatic start uses 10 unless one is saved)")
+    p.add_argument("--log", type=_path, help="append all output to this file (used by the automatic start)")
     p.set_defaults(func=cmd_improve)
 
     p = sub.add_parser("evaluate", help="score a split with evolved skills (or none)")
@@ -170,6 +194,13 @@ def _path(value: str) -> Path:
     return Path(value).expanduser()  # PowerShell and quoted paths leave ~ unexpanded
 
 
+def _usd(value: str) -> float:
+    amount = float(value)
+    if not amount > 0:
+        raise argparse.ArgumentTypeError("must be more than 0")
+    return amount
+
+
 def _backend_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--backend", choices=["claude", "codex"], default="claude", help="default %(default)s")
     p.add_argument("--model", help="model name passed to the CLI (default: the CLI's own default)")
@@ -197,9 +228,9 @@ def _file_log(path: Path) -> Iterator[None]:
         handler.close()
 
 
-def _backends(args: argparse.Namespace):
-    backend = make_backend(args.backend, args.model, args.backend_config)
-    judge = make_backend(args.backend, args.judge_model, args.backend_config) if args.judge_model else backend
+def _backends(args: argparse.Namespace, budget: Budget | None = None):
+    backend = make_backend(args.backend, args.model, args.backend_config, budget)
+    judge = make_backend(args.backend, args.judge_model, args.backend_config, budget) if args.judge_model else backend
     return backend, judge
 
 
@@ -252,17 +283,32 @@ def cmd_evolve(args: argparse.Namespace) -> int:
 
 
 def cmd_improve(args: argparse.Namespace) -> int:
+    try:
+        return _cmd_improve(args)
+    except (HumanReviewPending, LockBusy):  # waiting for a person or another run is no failure
+        raise
+    except Exception as e:  # shown by the next feedback, so a failing background run is noticed
+        record_failure(args.suite, str(e) or type(e).__name__)
+        raise
+
+
+def _cmd_improve(args: argparse.Namespace) -> int:
     suite = _suite(args, require_answers=False)  # checked strictly in _evolve_round, after the merge
     ws = resolve_workspace(args.workspace)
     ws.init()
+    budget = Budget(ws.spend_path, args.daily_budget) if args.daily_budget else None
     try:
         with ws.lock(wait=args.wait):
-            _improve(args, ws, suite)
+            if budget:
+                budget.start_run()
+            _improve(args, ws, suite, budget)
     except LockBusy as e:
         if not args.wait:
             raise
         print(f"{e}; that run will learn from the new feedback")
         return 0
+    except BudgetExceeded as e:  # every finished stage is saved: the next run goes on from here
+        print(f"paused: {e}; improvement continues with the first feedback of a new day")
     if args.export:  # also when there is nothing to do, so a missed or manual export is brought up to date
         for message in export_skills(ws.skills, args.export, suite.root):
             print(message)
@@ -271,7 +317,7 @@ def cmd_improve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _improve(args: argparse.Namespace, ws: Workspace, suite: Suite) -> None:
+def _improve(args: argparse.Namespace, ws: Workspace, suite: Suite, budget: Budget | None) -> None:
     """Resume or start rounds until no round is left and too little feedback waits for a new one."""
     rounds = 0
     while True:  # feedback recorded during a round starts the next one right away
@@ -281,7 +327,7 @@ def _improve(args: argparse.Namespace, ws: Workspace, suite: Suite) -> None:
             suite = _suite(args, require_answers=False)
         if not has_work(state, suite, args.iterations):
             break
-        _evolve_round(args, ws, merged)
+        _evolve_round(args, ws, merged, budget)
         rounds += 1
     if not rounds:
         print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
@@ -293,13 +339,13 @@ def _improve_args(args: argparse.Namespace) -> list[str]:
     values = {"--backend": args.backend, "--model": args.model, "--judge-model": args.judge_model,
               "--backend-config": args.backend_config and args.backend_config.resolve(),
               "--workers": args.workers, "--human-review": args.human_review, "--iterations": args.iterations,
-              "--export": args.export and args.export.resolve()}
+              "--export": args.export and args.export.resolve(), "--daily-budget": args.daily_budget}
     return [str(item) for flag, value in values.items() if value is not None for item in (flag, value)]
 
 
-def _evolve_round(args: argparse.Namespace, ws: Workspace, merged: int) -> None:
+def _evolve_round(args: argparse.Namespace, ws: Workspace, merged: int, budget: Budget | None) -> None:
     suite = _suite(args)  # strict check now that the feedback is merged
-    backend, judge = _backends(args)
+    backend, judge = _backends(args, budget)
     opts = EvolveOptions(iterations=args.iterations, workers=args.workers, adopt_new_tasks=True)
     with _file_log(ws.root / "run.log"):
         log.info("improve: suite=%s workspace=%s merged_feedback=%d", suite.name, ws.root, merged)
@@ -371,15 +417,22 @@ def cmd_feedback(args: argparse.Namespace) -> int:
                                      args.file)
     print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`")
     settings = load_settings(suite.root)
-    if count < (settings["min_new"] if settings else MIN_NEW):
+    if settings and settings.get("last_error"):
+        error = settings["last_error"]
+        print(f"warning: the last improve failed at {error.get('time')}: {error.get('message')} "
+              f"(log: {background_log(settings)})")
+    if count < (settings["min_new"] if settings else MIN_NEW) and not (settings and unfinished_round(settings, suite)):
         return 0
     if settings and not suite.human_review:
         try:
-            start_improve(suite, settings)
-        except OSError as e:  # the row is recorded either way
+            paused = automatic_budget(settings).blocked()
+            if not paused:
+                start_improve(suite, settings)
+        except (OSError, ValueError) as e:  # the row is recorded either way
             log.warning("could not start improve in the background: %s", e)
         else:
-            print(f"started: `improve` runs in the background (log: {background_log(settings)})")
+            print(f"paused: {paused}; improvement continues with the first feedback of a new day" if paused
+                  else f"started: `improve` runs in the background (log: {background_log(settings)})")
             return 0
     print("ready: run `improve` to learn from them")  # never run before, human review, or the start failed
     return 0
