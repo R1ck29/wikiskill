@@ -18,6 +18,7 @@ from wikiskill.config import ConfigError, load_suite
 from wikiskill.evolve import has_work, is_done
 from wikiskill.improve import (
     AUTO,
+    BACKGROUND_ERR,
     FEEDBACK,
     MERGED,
     automatic_options,
@@ -218,10 +219,17 @@ class ImproveTest(TempDirTest):
         options = automatic_options(saved)
         self.assertEqual((options["--model"], options["--daily-budget"]), ("claude-sonnet-5-5", "10.0"))
         code, out = run_cli("improve", self.suite, "--workspace", saved["workspace"], "--min-new", 2,
-                            *[item for pair in options.items() for item in pair], "--wait")  # what start_improve runs
-        self.assertEqual(code, 0, out)
+                            *[item for pair in options.items() for item in pair], "--wait", "--automatic")
+        self.assertEqual(code, 0, out)  # (what start_improve runs)
         self.assertIn("merged feedback: 2", out)
         self.assertIn("exported report-total", out)
+        self.assertEqual(load_settings(self.suite), settings)  # the person's options, not Sonnet and $10
+        (self.suite / AUTO).unlink()  # turned off while that run waited or ran
+        self.assertEqual(run_cli("improve", self.suite, "--workspace", saved["workspace"], "--min-new", 2,
+                                 *[item for pair in options.items() for item in pair], "--wait", "--automatic")[0], 0)
+        self.assertFalse((self.suite / AUTO).exists())  # it stays off
+        self.assertEqual(self.improve("--model", "m2")[0], 0)  # a manual improve saves its own
+        self.assertIn("m2", load_settings(self.suite)["args"])
 
     def test_automatic_runs_use_sonnet_on_claude_and_keep_a_saved_budget(self):
         options = automatic_options({"args": ["--backend", "codex", "--model", "gpt-x", "--daily-budget", "2.5"]})
@@ -292,6 +300,29 @@ class ImproveTest(TempDirTest):
         self.assertIn("started", out)  # the cause may be gone: the next run is still started
         self.assertEqual(self.improve()[0], 0)
         self.assertNotIn("last_error", load_settings(self.suite))  # a successful run clears it
+        self.assertNotIn("warning", self.add_feedback(1)[-1])
+
+    def test_a_pause_keeps_the_last_failure_until_a_run_gets_through(self):
+        self.assertEqual(self.improve()[0], 0)
+        self.add_feedback(3)
+        with mock.patch("wikiskill.cli._evolve_round", side_effect=RuntimeError("quota")):
+            self.assertEqual(self.improve()[0], 1)
+        with mock.patch("wikiskill.cli._evolve_round", side_effect=BudgetExceeded("today's budget is spent")):
+            self.assertIn("paused:", self.improve()[1])
+        self.assertEqual(load_settings(self.suite)["last_error"]["message"], "quota")
+        self.assertIn("warning: the last improve failed", self.add_feedback(1)[-1])
+        self.assertEqual(self.improve()[0], 0)
+        self.assertNotIn("last_error", load_settings(self.suite))
+
+    def test_a_background_start_that_died_early_is_reported(self):
+        self.assertEqual(self.improve()[0], 0)
+        err = self.ws / BACKGROUND_ERR
+        err.write_text("Traceback (most recent call last):\nModuleNotFoundError: No module named 'x'\n",
+                       encoding="utf-8")
+        out = self.add_feedback(1)[-1]
+        self.assertIn("warning: the last background start wrote errors before improve opened its log: "
+                      "ModuleNotFoundError: No module named 'x'", out)
+        err.write_text("", encoding="utf-8")  # what the next start leaves when it gets going
         self.assertNotIn("warning", self.add_feedback(1)[-1])
 
     def test_a_failure_is_recorded_for_a_suite_json_path_and_never_hides_the_error(self):
@@ -469,7 +500,18 @@ class BackgroundStartTest(TempDirTest):
         log = read_text(background_log(settings))
         self.assertIn("started by feedback", log)
         self.assertRegex(log, r"error: .*missing\.json")  # printed by the improve command itself
+        self.assertEqual(read_text(self.root / "ws" / BACKGROUND_ERR), "")  # it reached its own log
         self.assertIsNone(load_settings(suite))  # a failed run is never repeated automatically
+
+    def test_output_from_before_the_improve_command_lands_in_the_error_file(self):
+        suite = write_suite(self.root / "suite")
+        settings = {"workspace": str(self.root / "ws"), "min_new": 3,
+                    "args": ["--backend-config", str(self.root / "missing.json")]}
+        with mock.patch.dict("os.environ", {"PYTHONWARNINGS": "bogus"}):  # Python itself complains at startup
+            process = start_improve(load_suite(suite), settings)
+        self.assertEqual(process.wait(timeout=120), 2)
+        self.assertIn("Invalid -W option ignored", read_text(self.root / "ws" / BACKGROUND_ERR))
+        self.assertRegex(read_text(background_log(settings)), r"error: .*missing\.json")
 
     def test_a_usage_error_of_the_detached_run_reaches_its_log(self):
         log = self.root / "background.log"

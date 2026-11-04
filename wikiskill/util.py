@@ -21,6 +21,7 @@ _FENCED_JSON = re.compile(r"```(?:json)?\s*\n(.*?)\n```", re.DOTALL)
 WINDOWS_RESERVED = {"con", "prn", "aux", "nul"} | {f"{p}{i}" for p in ("com", "lpt") for i in range(1, 10)}
 _UMASK = os.umask(0)
 os.umask(_UMASK)
+_RETRY_REPLACE = os.name == "nt"  # Windows refuses to replace a file another process has open
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 
@@ -57,11 +58,23 @@ def write_text(path: Path, text: str) -> None:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         os.chmod(tmp, mode)
-        os.replace(tmp, str(path))
+        _replace(tmp, str(path))
     except BaseException:
         if os.path.exists(tmp):
             os.remove(tmp)
         raise
+
+
+def _replace(src: str, dst: str, tries: int = 5) -> None:
+    """os.replace, retried for a moment on Windows, where a reader holding `dst` open refuses it."""
+    for attempt in range(tries):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if not _RETRY_REPLACE or attempt == tries - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def backup_once(path: Path) -> None:

@@ -29,6 +29,31 @@ class UtilTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             extract_json_object("no json here")
 
+    def test_a_replace_refused_on_windows_is_retried(self):
+        from wikiskill import util
+        real = util.os.replace
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "spend.json")
+            for retry, refusals, ok in ((True, 2, True), (True, 5, False), (False, 1, False)):
+                calls = []
+
+                def replace(src, dst, n=refusals):
+                    calls.append(dst)
+                    if len(calls) <= n:
+                        raise PermissionError("in use by another process")
+                    real(src, dst)
+
+                with mock.patch.object(util, "_RETRY_REPLACE", retry), mock.patch.object(util.os, "replace", replace), \
+                        mock.patch.object(util.time, "sleep"):
+                    if ok:
+                        util.write_text(path, "new")
+                        self.assertEqual(path.read_text(), "new")
+                    else:
+                        with self.assertRaises(PermissionError):
+                            util.write_text(path, "lost")
+                self.assertEqual(len(calls), min(refusals + 1, 5) if retry else 1)
+                self.assertEqual([p.name for p in Path(tmp).iterdir()], ["spend.json"])  # no temp file left
+
     def test_truncate_keeps_head_and_tail(self):
         text = "H" * 100 + "M" * 1000 + "TAIL"
         out = truncate(text, 300)

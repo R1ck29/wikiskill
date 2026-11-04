@@ -5,6 +5,7 @@ import argparse
 import contextlib
 import json
 import logging
+import math
 import platform
 import shutil
 import sys
@@ -19,9 +20,11 @@ from .config import ConfigError, Suite, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import Evolution, EvolveOptions, has_work
 from .improve import (
+    BACKGROUND_ERR,
     ITERATIONS,
     MIN_NEW,
     automatic_budget,
+    background_error,
     background_log,
     export_skills,
     feedback_footer,
@@ -125,6 +128,7 @@ def _add_run_commands(sub: Any) -> None:
                    help="stop for the day once budgeted runs of this workspace spent this much "
                         "(as reported by the CLI; the automatic start uses 10 unless one is saved)")
     p.add_argument("--log", type=_path, help="append all output to this file (used by the automatic start)")
+    p.add_argument("--automatic", action="store_true", help=argparse.SUPPRESS)  # started by feedback
     p.set_defaults(func=cmd_improve)
 
     p = sub.add_parser("evaluate", help="score a split with evolved skills (or none)")
@@ -196,8 +200,8 @@ def _path(value: str) -> Path:
 
 def _usd(value: str) -> float:
     amount = float(value)
-    if not amount > 0:
-        raise argparse.ArgumentTypeError("must be more than 0")
+    if not (math.isfinite(amount) and amount > 0):
+        raise argparse.ArgumentTypeError("must be a number more than 0")
     return amount
 
 
@@ -230,7 +234,8 @@ def _file_log(path: Path) -> Iterator[None]:
 
 def _backends(args: argparse.Namespace, budget: Budget | None = None):
     backend = make_backend(args.backend, args.model, args.backend_config, budget)
-    judge = make_backend(args.backend, args.judge_model, args.backend_config, budget) if args.judge_model else backend
+    separate = args.judge_model and args.judge_model != args.model  # the same model needs no second backend
+    judge = make_backend(args.backend, args.judge_model, args.backend_config, budget) if separate else backend
     return backend, judge
 
 
@@ -297,6 +302,7 @@ def _cmd_improve(args: argparse.Namespace) -> int:
     ws = resolve_workspace(args.workspace)
     ws.init()
     budget = Budget(ws.spend_path, args.daily_budget) if args.daily_budget else None
+    paused = False
     try:
         with ws.lock(wait=args.wait):
             if budget:
@@ -308,12 +314,20 @@ def _cmd_improve(args: argparse.Namespace) -> int:
         print(f"{e}; that run will learn from the new feedback")
         return 0
     except BudgetExceeded as e:  # every finished stage is saved: the next run goes on from here
+        paused = True
         print(f"paused: {e}; improvement continues with the first feedback of a new day")
     if args.export:  # also when there is nothing to do, so a missed or manual export is brought up to date
         for message in export_skills(ws.skills, args.export, suite.root):
             print(message)
     # feedback starts this same command later; a background run cannot stop for a person's scores
-    save_settings(suite.root, None if suite.human_review else (args.workspace, args.min_new, _improve_args(args)))
+    if suite.human_review:
+        save_settings(suite.root, None)
+    elif not args.automatic:
+        save_settings(suite.root, (args.workspace, args.min_new, _improve_args(args)), keep_error=paused)
+    else:  # started by feedback: what the person saved (or removed) stays; only the error note changes
+        saved = load_settings(suite.root)
+        if saved:
+            save_settings(suite.root, (saved["workspace"], saved["min_new"], saved["args"]), keep_error=paused)
     return 0
 
 
@@ -421,6 +435,10 @@ def cmd_feedback(args: argparse.Namespace) -> int:
         error = settings["last_error"]
         print(f"warning: the last improve failed at {error.get('time')}: {error.get('message')} "
               f"(log: {background_log(settings)})")
+    early = background_error(settings) if settings else ""
+    if early:
+        print(f"warning: the last background start wrote errors before improve opened its log: {early} "
+              f"(details: {background_log(settings).with_name(BACKGROUND_ERR)})")
     if count < (settings["min_new"] if settings else MIN_NEW) and not (settings and unfinished_round(settings, suite)):
         return 0
     if settings and not suite.human_review:

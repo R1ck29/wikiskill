@@ -1,3 +1,4 @@
+import argparse
 import contextlib
 import io
 import json
@@ -8,6 +9,7 @@ from unittest import mock
 
 from tests.fakes import FakeBackend
 from tests.test_evolve import write_suite
+from wikiskill import cli
 from wikiskill.cli import EXIT_CONFIG, EXIT_REVIEW, main
 from wikiskill.config import load_suite
 from wikiskill.evolve import Evolution, EvolveOptions
@@ -85,6 +87,21 @@ class CLITest(unittest.TestCase):
             code, out = run_cli("evolve", self.suite_dir, "--workspace", self.root / "ws3", "--human-review", "on")
         self.assertEqual(code, EXIT_REVIEW)
         self.assertIn("baseline_val.csv", out)
+
+    def test_a_judge_on_the_same_model_shares_the_backend(self):
+        with mock.patch("wikiskill.cli.make_backend", side_effect=lambda *a: object()) as make:
+            for judge_model, calls in ((None, 1), ("m", 1), ("other", 2)):
+                make.reset_mock()
+                backend, judge = cli._backends(argparse.Namespace(backend="claude", model="m", judge_model=judge_model,
+                                                                  backend_config=None))
+                self.assertEqual(make.call_count, calls)
+                self.assertEqual(backend is judge, calls == 1)
+
+    def test_a_daily_budget_must_be_a_finite_amount(self):
+        self.assertEqual(cli._usd("2.5"), 2.5)
+        for bad in ("0", "-1", "inf", "nan"):
+            with self.assertRaises(argparse.ArgumentTypeError):
+                cli._usd(bad)
 
     def test_user_errors_are_reported_not_raised(self):
         code, out = run_cli("compare", self.root / "missing.json", self.root / "missing.json")

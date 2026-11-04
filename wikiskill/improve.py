@@ -10,7 +10,9 @@ fills the queue starts the same `improve` as a detached background process (`sta
 so a suite keeps improving without anyone running a command. Deleting improve.json stops that.
 Automatic runs use Sonnet 5.5 on the claude CLI and a daily budget (AUTO_BUDGET USD unless
 `improve --daily-budget` was saved); a spent budget pauses them until the next day. An improve
-that fails notes the error in improve.json (`record_failure`), and the next feedback reports it.
+that fails notes the error in improve.json (`record_failure`), and the next feedback reports it,
+as it does a background start that died before the improve command ran (BACKGROUND_ERR).
+An automatic run saves the settings it was started with, not its own policy options.
 """
 from __future__ import annotations
 
@@ -48,6 +50,7 @@ QUEUE_LOCK = "feedback.lock"  # held while the queue is appended to, read or mer
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
 AUTO = "improve.json"  # settings of the last improve, reused by the automatic start
 BACKGROUND_LOG = "background.log"  # output of automatic runs, in the workspace
+BACKGROUND_ERR = "background.err"  # stderr of the last automatic start until improve opens its log
 LOG_LIMIT, LOG_KEEP = 1 << 20, 1 << 18  # a background.log over 1 MB is cut to its last 256 KB
 FEEDBACK_FILES = "fb"  # input files of feedback rows: <files_dir>/fb/<id>/<name>
 MIN_NEW = 3  # pending feedback rows that start a new round (improve --min-new default)
@@ -156,8 +159,12 @@ def merge_pending(suite_root: Path, tasks_path: Path) -> int:
 
 
 # ----- automatic start ------------------------------------------------------------------
-def save_settings(suite_root: Path, settings: tuple[Path, int, Sequence[str]] | None) -> None:
-    """Remember (workspace, min_new, options) of `improve` for the automatic start; None turns it off."""
+def save_settings(suite_root: Path, settings: tuple[Path, int, Sequence[str]] | None,
+                  keep_error: bool = False) -> None:
+    """Remember (workspace, min_new, options) of `improve` for the automatic start; None turns it off.
+
+    A saved last_error is dropped unless `keep_error` (a paused run has not shown the cause is gone).
+    """
     path = Path(suite_root) / AUTO
     if settings is None:
         if path.is_file():
@@ -165,7 +172,10 @@ def save_settings(suite_root: Path, settings: tuple[Path, int, Sequence[str]] | 
         return
     workspace, min_new, args = settings
     data = {"workspace": str(Path(workspace).resolve()), "min_new": min_new, "args": list(args)}
-    if not path.is_file() or read_json(path) != data:
+    previous = load_settings(suite_root)
+    if keep_error and previous and "last_error" in previous:
+        data["last_error"] = previous["last_error"]
+    if previous != data:
         write_json(path, data)
 
 
@@ -183,7 +193,7 @@ def load_settings(suite_root: Path) -> dict[str, Any] | None:
 
 def record_failure(suite: Path, message: str) -> None:
     """Note a failed improve in the saved settings of `suite` (folder or suite.json); the next
-    successful improve clears it (save_settings). Never raises: the original error matters more."""
+    improve that is not paused clears it (save_settings). Never raises: the original error matters more."""
     root = Path(suite) if Path(suite).is_dir() else Path(suite).parent
     settings = load_settings(root)
     if settings is None:
@@ -199,6 +209,8 @@ def start_improve(suite: Suite, settings: dict[str, Any]) -> subprocess.Popen:
     """Start the saved `improve` as a detached process that outlives this one (output: background_log).
 
     It queues behind a running evolve/improve (`--wait`), and exits at once if another one already waits.
+    Its stderr goes to a fresh BACKGROUND_ERR, which stays empty once the command opens its own log:
+    only a start that dies before that (a broken interpreter or install) writes there (background_error).
     """
     log = background_log(settings)
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -208,12 +220,13 @@ def start_improve(suite: Suite, settings: dict[str, Any]) -> subprocess.Popen:
                PYTHONPATH=os.pathsep.join(p for p in (package_root, os.environ.get("PYTHONPATH")) if p))
     options = [item for pair in automatic_options(settings).items() for item in pair]
     command = [sys.executable, "-m", "wikiskill", "improve", str(suite.root), "--workspace", settings["workspace"],
-               "--min-new", str(settings["min_new"]), *options, "--wait", "--log", str(log)]
+               "--min-new", str(settings["min_new"]), *options, "--wait", "--automatic", "--log", str(log)]
     flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
     with open(log, "a", encoding="utf-8") as out:
         out.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} started by feedback ===\n")
-    return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            env=env, cwd=package_root, start_new_session=os.name != "nt", creationflags=flags)
+    with open(log.with_name(BACKGROUND_ERR), "wb") as err:  # the child keeps its own handle
+        return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
+                                env=env, cwd=package_root, start_new_session=os.name != "nt", creationflags=flags)
 
 
 def automatic_options(settings: dict[str, Any]) -> dict[str, str]:
@@ -251,6 +264,15 @@ def automatic_budget(settings: dict[str, Any]) -> Budget:
 
 def background_log(settings: dict[str, Any]) -> Path:
     return Path(settings["workspace"]) / BACKGROUND_LOG
+
+
+def background_error(settings: dict[str, Any]) -> str:
+    """The last line the last automatic start wrote before its improve command ran, or ""."""
+    try:
+        lines = Path(settings["workspace"], BACKGROUND_ERR).read_text(encoding="utf-8", errors="replace").split("\n")
+    except OSError:
+        return ""
+    return next((line.strip()[:500] for line in reversed(lines) if line.strip()), "")
 
 
 def trim_log(path: Path, limit: int = LOG_LIMIT, keep: int = LOG_KEEP) -> None:
