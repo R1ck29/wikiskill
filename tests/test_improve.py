@@ -433,6 +433,20 @@ class ImproveTest(TempDirTest):
         self.assertEqual(code, 0, out)
         self.assertIn("report-total", out)
         self.assertIn("exported report-total", run_cli("export", self.ws, "--dest", self.root / "other")[1])
+
+    def test_feedback_sees_spend_and_progress_of_a_legacy_generation(self):
+        self.assertEqual(self.improve()[0], 0)  # settings keep the path the user passed
+        gen = self.ws / "gen-002"  # 0.2.x layout: the run lives here, not in the root
+        gen.mkdir()
+        state = json.loads(read_text(self.ws / "state.json"))
+        (self.ws / "state.json").unlink()
+        state.update(iteration=1, round_start=1, r_best=0.25, stage="rollout")
+        Workspace(gen).save_state(state)
+        Budget(Workspace(gen).spend_path, 10).add(10)  # the automatic run's $10, recorded where improve writes it
+        self.started.reset_mock()
+        out = self.add_feedback(1)[-1]  # one row: only an unfinished round would look at the budget
+        self.assertIn("paused: today's budget of $10.00 is spent ($10.00)", out)
+        self.started.assert_not_called()
         code, out = run_cli("evolve", self.suite, "--workspace", self.ws, "--iterations", 3, "--workers", 1)
         self.assertEqual(code, 0, out)  # evolve follows the same folder instead of starting over in the root
         self.assertFalse((self.ws / "state.json").exists())

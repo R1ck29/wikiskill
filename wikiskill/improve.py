@@ -43,13 +43,13 @@ from .util import (
     write_json,
     write_text,
 )
-from .workspace import Workspace
+from .workspace import Workspace, resolve_workspace
 
 FEEDBACK = "feedback.jsonl"
 QUEUE_LOCK = "feedback.lock"  # held while the queue is appended to, read or merged
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
 AUTO = "improve.json"  # settings of the last improve, reused by the automatic start
-BACKGROUND_LOG = "background.log"  # output of automatic runs, in the workspace
+BACKGROUND_LOG = "background.log"  # automatic-run output, at the workspace path saved in improve.json
 BACKGROUND_ERR = "background.err"  # stderr of the last automatic start until improve opens its log
 LOG_LIMIT, LOG_KEEP = 1 << 20, 1 << 18  # a background.log over 1 MB is cut to its last 256 KB
 FEEDBACK_FILES = "fb"  # input files of feedback rows: <files_dir>/fb/<id>/<name>
@@ -245,11 +245,20 @@ def automatic_options(settings: dict[str, Any]) -> dict[str, str]:
     return options
 
 
+def _workspace(settings: dict[str, Any]) -> Workspace:
+    """The workspace `improve` actually runs in for this saved path.
+
+    Same rule as the improve command: a 0.2.x layout keeps using its newest gen-NNN folder.
+    `background.log` stays at the saved path, because that is the file passed to `--log`.
+    """
+    return resolve_workspace(Path(settings["workspace"]))
+
+
 def unfinished_round(settings: dict[str, Any], suite: Suite) -> bool:
     """True when the saved workspace stopped inside a round (paused, interrupted or failed): the next
     feedback row starts it again even with fewer than min_new rows waiting."""
     try:
-        state = Workspace(Path(settings["workspace"])).load_state()
+        state = _workspace(settings).load_state()
         iterations = int(automatic_options(settings).get("--iterations", ITERATIONS))
         return state is not None and has_work(state, suite, iterations)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):  # damaged state: rows still count as usual
@@ -259,7 +268,7 @@ def unfinished_round(settings: dict[str, Any], suite: Suite) -> bool:
 def automatic_budget(settings: dict[str, Any]) -> Budget:
     """The budget the automatic run would spend from (the ledger lives in its workspace)."""
     limit = float(automatic_options(settings)["--daily-budget"])
-    return Budget(Workspace(Path(settings["workspace"])).spend_path, limit)
+    return Budget(_workspace(settings).spend_path, limit)
 
 
 def background_log(settings: dict[str, Any]) -> Path:
