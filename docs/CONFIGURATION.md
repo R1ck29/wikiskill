@@ -18,9 +18,12 @@ python -m wikiskill check --backend codex --model gpt-5.5
 | `command 'claude' -> NOT FOUND` | PATH にコマンドがない。CLI をインストールするか、設定ファイルの `command` にフルパスを書く |
 | `error: claude exited 1: ... unknown option` | お使いの CLI のバージョンにない引数がある。設定ファイルで引数を変更（3 章） |
 | `codex error: ... model is not supported` | その CLI の既定モデルが使えない。`--model` で使えるモデルを指定 |
-| `run_agent(): ok=True answer='42'` | 準備完了 |
+| `error: sum.txt is missing or not 42: ...` | エージェントがツールを使えない。管理者の設定で `bypassPermissions` が禁止されていることが多いので、3 章の例のように許可するツールを指定する |
+| `claude error: ... authentication` などの認証エラー | `claude -p "hello"` が単体で動くようにする（4 章「認証」） |
+| `run_agent(): ok=True answer='42' sum.txt='42'` | 準備完了 |
 
-`--model` を省略すると CLI 自身の既定モデルが使われます。
+`--model` を省略すると CLI 自身の既定モデルが使われます。`check` のエージェント実行は、シェルで足し算をして結果をファイルに書かせる
+テストなので、ツールが禁止されている環境（暗算で答えられてしまう）も見分けられます。
 
 ## 2. 呼び出し方と既定の引数
 
@@ -91,9 +94,20 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
 
 ## 4. 社内環境での注意
 
+- **認証**: WikiSkill は認証情報を扱わず、CLI がいつもどおり認証します（`--safe-mode` でも認証は通常どおり）。API キーなら
+  `ANTHROPIC_API_KEY`（または Claude Code 設定の `apiKeyHelper`）、Bedrock・Vertex・社内ゲートウェイならその環境変数を、
+  `claude` を実行する環境で設定してください。`feedback` が裏で起動する自動の改善は、記録した Claude Code のセッションの環境変数を引き継ぎます。
+- **自動の改善のモデル**: claude では別名 `sonnet` を渡します。Bedrock や社内ゲートウェイでも CLI がその環境の Sonnet に解決しますが、
+  別名が使えない環境では `ANTHROPIC_DEFAULT_SONNET_MODEL` でその環境のモデル名を指定してください。
+- **管理者の設定（managed settings）**: `--safe-mode` でも管理者の設定は効きます。`bypassPermissions` が禁止されていると
+  エージェント実行が失敗するので、3 章の例のように `acceptEdits` と許可するツールを指定してください（`check` で確かめられます）。
+- **ネットワークドライブ**: スイートとワークスペースはローカルのドライブに置いてください。ファイルロックが使えないドライブでは
+  `cannot lock ... keep WikiSkill folders on a local drive` と表示して止まります。
 - **WikiSkill 自身の通信**: ありません（ネットワーク系モジュールを使っていないことを `tests/test_no_network.py` で確認しています）。
   通信は CLI からモデルへの呼び出しだけです。エージェントがシェル経由で外部に接続できるかどうかは、CLI と社内ネットワークの設定によります。
 - **`--safe-mode` が使えない CLI**: 古い claude では `unknown option` になります。`complete_args` / `agent_args` から外してください。
+- **Windows での自動の改善**: 隠れたコンソールで動くため、ウィンドウは開きません。止めたいときはタスクマネージャーで
+  `python` を終了するか、スイートの `improve.json` を消して次から起動しないようにします。
 - **Codex の個人設定**: `codex exec` は `~/.codex` 配下の個人設定（インストール済みスキルなど）を読み込みます
   （codex-cli 0.146.1 で確認）。`--safe-mode` に当たる指定は使っていないため、実験を純粋にしたい場合は Codex 側で無効化してください。
 - **CLI の障害**: タイムアウトや API エラーは自動で再試行し、それでも失敗したタスクは**採点せずに**処理を止めます

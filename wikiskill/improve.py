@@ -8,7 +8,7 @@
 `improve` also saves its settings to `<suite>/improve.json`; from then on the feedback row that
 fills the queue starts the same `improve` as a detached background process (`start_improve`),
 so a suite keeps improving without anyone running a command. Deleting improve.json stops that.
-Automatic runs use Sonnet 5.5 on the claude CLI and a daily budget (AUTO_BUDGET USD unless
+Automatic runs use the `sonnet` alias on the claude CLI and a daily budget (AUTO_BUDGET USD unless
 `improve --daily-budget` was saved); a spent budget pauses them until the next day. An improve
 that fails notes the error in improve.json (`record_failure`), and the next feedback reports it,
 as it does a background start that died before the improve command ran (BACKGROUND_ERR).
@@ -17,6 +17,7 @@ An automatic run saves the settings it was started with, not its own policy opti
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import re
@@ -45,6 +46,7 @@ from .util import (
 )
 from .workspace import Workspace, resolve_workspace
 
+log = logging.getLogger(__name__)
 FEEDBACK = "feedback.jsonl"
 QUEUE_LOCK = "feedback.lock"  # held while the queue is appended to, read or merged
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
@@ -55,7 +57,7 @@ LOG_LIMIT, LOG_KEEP = 1 << 20, 1 << 18  # a background.log over 1 MB is cut to i
 FEEDBACK_FILES = "fb"  # input files of feedback rows: <files_dir>/fb/<id>/<name>
 MIN_NEW = 3  # pending feedback rows that start a new round (improve --min-new default)
 ITERATIONS = 3  # iterations per improve round (improve --iterations default)
-AUTO_MODEL = {"claude": "claude-sonnet-5-5"}  # model of automatic runs, per backend
+AUTO_MODEL = {"claude": "sonnet"}  # model of automatic runs: the alias resolves on every provider (Bedrock too)
 AUTO_BUDGET = 10.0  # USD a day for automatic runs unless `improve --daily-budget` was saved
 
 
@@ -108,7 +110,9 @@ def record_feedback(suite: Suite, prompt: str, verdict: str, output: str | None 
     if rel:
         row["files"] = rel
     with locked(suite.root / QUEUE_LOCK):
-        append_text(suite.root / FEEDBACK, json.dumps(row, ensure_ascii=False) + "\n")
+        queue = suite.root / FEEDBACK
+        cut = queue.is_file() and not read_text(queue).endswith("\n")  # a crash cut the last line short
+        append_text(queue, ("\n" if cut else "") + json.dumps(row, ensure_ascii=False) + "\n")
         return task_id, len(_queue(suite.root))
 
 
@@ -124,7 +128,17 @@ def _queue(suite_root: Path) -> list[dict[str, Any]]:
 
 
 def _rows(text: str) -> list[dict[str, Any]]:
-    return [json.loads(line) for line in text.splitlines() if line.strip()]
+    rows = []
+    for line in filter(str.strip, text.splitlines()):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            row = None
+        if isinstance(row, dict) and isinstance(row.get("id"), str):
+            rows.append(row)
+        else:  # cut off by a crash or a full disk: the rest of the queue still counts
+            log.warning("skipping a damaged feedback line: %.80s", line)
+    return rows
 
 
 # ----- improve: rounds ----------------------------------------------------------------
@@ -212,19 +226,20 @@ def start_improve(suite: Suite, settings: dict[str, Any]) -> subprocess.Popen:
     Its stderr goes to a fresh BACKGROUND_ERR, which stays empty once the command opens its own log:
     only a start that dies before that (a broken interpreter or install) writes there (background_error).
     """
-    log = background_log(settings)
-    log.parent.mkdir(parents=True, exist_ok=True)
-    trim_log(log)
+    log_path = background_log(settings)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    trim_log(log_path)
     package_root = str(Path(__file__).resolve().parent.parent)
     env = dict(os.environ, PYTHONIOENCODING="utf-8",
                PYTHONPATH=os.pathsep.join(p for p in (package_root, os.environ.get("PYTHONPATH")) if p))
     options = [item for pair in automatic_options(settings).items() for item in pair]
     command = [sys.executable, "-m", "wikiskill", "improve", str(suite.root), "--workspace", settings["workspace"],
-               "--min-new", str(settings["min_new"]), *options, "--wait", "--automatic", "--log", str(log)]
-    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-    with open(log, "a", encoding="utf-8") as out:
+               "--min-new", str(settings["min_new"]), *options, "--wait", "--automatic", "--log", str(log_path)]
+    # Windows: a new hidden console (not DETACHED_PROCESS, which makes every CLI call open a console window)
+    flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    with open(log_path, "a", encoding="utf-8") as out:
         out.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} started by feedback ===\n")
-    with open(log.with_name(BACKGROUND_ERR), "wb") as err:  # the child keeps its own handle
+    with open(log_path.with_name(BACKGROUND_ERR), "wb") as err:  # the child keeps its own handle
         return subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=err,
                                 env=env, cwd=package_root, start_new_session=os.name != "nt", creationflags=flags)
 

@@ -1,4 +1,5 @@
 """Plugin packaging: the skill launcher, the manifests and tools/integrate.py."""
+import json
 import shutil
 import subprocess
 import sys
@@ -56,6 +57,10 @@ class LauncherTest(TempDirTest):
         with mock.patch("shutil.which", lambda name: None):
             self.assertIsNone(run_wikiskill.newer_python())
 
+    def test_plugin_version_matches_the_package(self):
+        manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], __version__)
+
     def test_frontmatter_and_launcher_reference(self):
         text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
         front = text.split("---")[1]
@@ -101,6 +106,54 @@ class IntegrateTest(TempDirTest):
         self.assertIn("--force", result.stderr)
         self.assertEqual(self.integrate(self.host, "--force").returncode, 0)
 
+    def test_a_failed_update_keeps_the_working_copy(self):
+        sys.path.insert(0, str(REPO / "tools"))
+        self.addCleanup(sys.path.remove, str(REPO / "tools"))
+        import integrate
+        dest = integrate.integrate(self.host)
+        (dest / "SKILL.md").write_text("working copy", encoding="utf-8")
+        real = shutil.copytree
+
+        def fail_on_docs(src, dst, *args, **kw):
+            if Path(src) == REPO / "docs":
+                raise OSError("disk full")
+            return real(src, dst, *args, **kw)
+        with mock.patch("shutil.copytree", fail_on_docs), self.assertRaises(OSError):
+            integrate.integrate(self.host, force=True)
+        self.assertEqual((dest / "SKILL.md").read_text(encoding="utf-8"), "working copy")
+        self.assertEqual(sorted(p.name for p in dest.parent.iterdir()), ["wikiskill"])  # no half copy left
+        integrate.integrate(self.host, force=True)
+        self.assertNotEqual((dest / "SKILL.md").read_text(encoding="utf-8"), "working copy")
+
+    def test_a_failed_swap_puts_the_working_copy_back(self):
+        sys.path.insert(0, str(REPO / "tools"))
+        self.addCleanup(sys.path.remove, str(REPO / "tools"))
+        import integrate
+        dest = integrate.integrate(self.host)
+        (dest / "SKILL.md").write_text("working copy", encoding="utf-8")
+        real = Path.rename
+
+        def busy(path, target):
+            if Path(path).name == ".wikiskill.new":
+                raise PermissionError("in use")
+            return real(path, target)
+        with mock.patch.object(Path, "rename", busy), self.assertRaises(PermissionError):
+            integrate.integrate(self.host, force=True)
+        self.assertEqual((dest / "SKILL.md").read_text(encoding="utf-8"), "working copy")
+        self.assertEqual(sorted(p.name for p in dest.parent.iterdir()), ["wikiskill"])
+
+    def test_tilde_means_the_home_folder(self):
+        home = self.root / "home"
+        (home / ".claude" / "skills").mkdir(parents=True)
+        env = {"HOME": str(home), "USERPROFILE": str(home)}
+        with mock.patch.dict("os.environ", env):
+            result = subprocess.run([sys.executable, str(REPO / "tools" / "integrate.py"), "~/.claude/skills",
+                                     "--skills-dir"], cwd=self.root, capture_output=True, text=True,
+                                    encoding="utf-8", timeout=120, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((home / ".claude" / "skills" / "wikiskill" / "SKILL.md").is_file())
+        self.assertFalse((self.root / "~").exists())
+
     def test_force_never_deletes_a_foreign_folder(self):
         foreign = self.host / "skills" / "wikiskill"
         foreign.mkdir(parents=True)
@@ -125,6 +178,14 @@ class IntegrateTest(TempDirTest):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("inside this repository", result.stderr)
         self.assertTrue((REPO / "skills" / "wikiskill" / "SKILL.md").is_file())
+
+    def test_project_folder_gets_the_skill_in_its_claude_folder(self):
+        project = self.root / "project"
+        (project / ".claude").mkdir(parents=True)
+        result = self.integrate(project)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((project / ".claude" / "skills" / "wikiskill" / "SKILL.md").is_file())
+        self.assertIn("check --no-call", result.stdout)
 
     def test_target_must_be_a_plugin_unless_skills_dir(self):
         skills = self.root / "my-skills"

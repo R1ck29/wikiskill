@@ -266,11 +266,19 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"  complete(): {reply.strip()[:80]!r}")
     with tempfile.TemporaryDirectory(prefix="wikiskill-check-") as tmp:
         Path(tmp, "numbers.txt").write_text("17\n25\n", encoding="utf-8")
-        result = backend.run_agent("Add the numbers in numbers.txt using a shell command. "
-                                   "Give the result inside <answer></answer>.", None, Path(tmp))
+        result = backend.run_agent("Add the numbers in numbers.txt using a shell command and write the sum "
+                                   "to a new file sum.txt. Give the sum inside <answer></answer>.", None, Path(tmp))
+        written = Path(tmp, "sum.txt").read_text(encoding="utf-8", errors="replace").strip() \
+            if Path(tmp, "sum.txt").is_file() else None
     answer = extract_answer(result.final_text)
-    print(f"  run_agent(): ok={result.ok} answer={answer!r} (expected '42')" + (f" error={result.error}" if not result.ok else ""))
-    return 0 if result.ok and answer.strip() == "42" else EXIT_ERROR
+    print(f"  run_agent(): ok={result.ok} answer={answer!r} sum.txt={written!r} (expected '42')"
+          + (f" error={result.error}" if not result.ok else ""))
+    if result.ok and written != "42":  # an agent without tools can still add 17 and 25 in its head
+        print("error: sum.txt is missing or not 42: the agent may be unable to run commands or write files. "
+              "A policy may forbid "
+              "--permission-mode bypassPermissions; allow the tools in a backend config "
+              "(docs/CONFIGURATION.md, section 3)", file=sys.stderr)
+    return 0 if result.ok and answer.strip() == "42" and written == "42" else EXIT_ERROR
 
 
 def cmd_evolve(args: argparse.Namespace) -> int:

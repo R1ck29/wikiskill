@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import os
 import re
@@ -91,6 +92,9 @@ def append_text(path: Path, text: str) -> None:
         f.write(text)
 
 
+_LOCK_BUSY = {errno.EACCES, errno.EAGAIN, errno.EDEADLK}  # msvcrt reports a held lock as EACCES / EDEADLOCK
+
+
 def try_lock(path: Path) -> IO[str] | None:
     """Take the OS lock on `path` (created if missing), or None if another open file holds it.
 
@@ -103,9 +107,12 @@ def try_lock(path: Path) -> IO[str] | None:
             msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             fcntl.flock(f.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
+    except OSError as e:
         f.close()
-        return None
+        if isinstance(e, BlockingIOError) or e.errno in _LOCK_BUSY:
+            return None
+        # e.g. a network drive without file locks: waiting would never end, so say why
+        raise OSError(e.errno, f"cannot lock {path} ({e.strerror}); keep WikiSkill folders on a local drive") from e
     return f
 
 

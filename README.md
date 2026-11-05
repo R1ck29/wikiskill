@@ -8,8 +8,8 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 の手法を、論文本文・Algorithm 1・付録のプロンプトに基づいて実装しています（論文にはコードへのリンクがないため独自実装です）。
 
 - **Python 3.9 以上の標準ライブラリだけ**で動きます（`pip install` 不要）。Windows / macOS / Linux 対応。
-- モデルは手元の **`claude` / `codex` コマンド経由でのみ**呼び出します。WikiSkill 自身はネットワークに接続しないため、
-  CLI が Bedrock や社内ゲートウェイで認証済みなら、そのまま使えます。
+- モデルは手元の **`claude`（または `codex`）コマンド経由でのみ**呼びます。WikiSkill 自身はネットワークに接続しないので、
+  CLI が API キー・Bedrock・社内ゲートウェイのどれで認証していても、そのまま使えます。
 - 育ったスキルは Claude Code や Codex のスキルとしてそのまま使えます。
 
 ## しくみ
@@ -25,93 +25,60 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 ```
 
 タスクは 3 つに分けて使います。**train**（学習用。①で解く）、**val**（検証用。④の採否判定）、
-**test**（最終評価用。育成中は一切使わない）。詳しい構造と論文との対応は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) にあります。
+**test**（最終評価用。育成中は一切使わない）。
 
-## Claude のプラグインとして使う（ターミナル操作なし）
+育ったスキルを使い始めたあとも、利用者が結果に「良い」「違う、正しくは…」と言うだけで記録され（`feedback`）、
+3 件たまると裏で自動的に育て直します（`improve`。点が上がったときだけ採用し、書き出したスキルも更新）。
+詳しい構造・自動改善の動き・論文との対応は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) にあります。
 
-プラグインを入れると、Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、
-Claude が以下のコマンドを代わりに実行します。利用者の作業は**例のフォルダを伝えることだけ**です。
-正解が無い業務は Claude が採点基準を書いて自動採点し、育ったスキルは自動で `~/.claude/skills` に入って全プロジェクトで使えるようになります。
-その後も、育ったスキルの結果に「良い」「違う、正しくは…」と言うだけで記録され、3 件たまると裏で自動的に育て直します（下の「使うほど賢くなる」）。
-プラグインが常に消費するのは 1 セッションあたり約 50 トークンで、呼び出したときに約 750 トークン（手順書の読み込み）が加わります。
-Python 3.9 以上と `claude`（または `codex`）コマンドは、下の「準備」と同じく必要です。
+## 入れ方
 
-入れ方は 3 通りあります。
+どの方法でも、Python 3.9 以上と `claude`（または `codex`）コマンドが必要です（ターミナルで `claude -p "hello"` が返答すれば OK）。
+入れたあとは Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、Claude が下のコマンドを代わりに実行します。
+利用者の作業は**例のフォルダを伝えることだけ**で、正解が無い業務は Claude が採点基準を書いて自動採点し、
+育ったスキルは `~/.claude/skills` に書き出されて全プロジェクトで使えるようになります。
+常に消費するのは 1 セッションあたり約 50 トークン（スキルの説明文）で、呼び出したときだけ約 850 トークン（手順書）が加わります。
 
-**A. Claude のコマンドで入れる（GitHub に接続できる環境）**: Claude Code のチャット欄に次を入力します。
-
-```
-/plugin install wikiskill --marketplace R1ck29/wikiskill
-```
-
-ターミナルからなら `claude plugin install wikiskill --marketplace R1ck29/wikiskill` です
-（Claude Code 2.1.275 より前は `/plugin marketplace add R1ck29/wikiskill` のあと `/plugin install wikiskill@wikiskill`）。
-入れたあとは `/wikiskill:wikiskill` で呼び出せます。話しかけるだけでも、通常は Claude が自動で呼び出します。
-
-**B. ZIP から自分のグローバル設定に入れる（Claude に頼む）**: 「Code → Download ZIP」で取得して展開し、
-[INSTALL_PROMPT.md](INSTALL_PROMPT.md) の文章を Claude に貼り付けて送ります。Claude がコマンドを 1 回実行するだけで
-`~/.claude/skills/wikiskill` に入り、`/wikiskill` で使えます（ZIP のフォルダは消して構いません）。
-プラグインとして入れたい場合は `/plugin install wikiskill --marketplace <展開したフォルダ>` でも入ります（この場合はフォルダを残します）。
-
-**C. 社内の既存プラグイン（ハーネス）に組み込む**: マーケットプレイスに公開できない場合の方法です。プラグインの管理者が
-ZIP を展開したフォルダで次を 1 回実行し、あとはそのプラグインをいつもどおり配布します。
+**A. ZIP から自分のグローバル設定に入れる（社内での標準）**: GitHub の「Code → Download ZIP」で取得して展開し、
+[INSTALL_PROMPT.md](INSTALL_PROMPT.md) の文章を Claude Code に貼り付けて送ります。Claude が [CLAUDE.md](CLAUDE.md) の手順に従って
+`~/.claude/skills/wikiskill` に入れ、動作を確かめます。特定のプラグインやプロジェクトに入れたい場合の文章も同じファイルにあります。
+手で行う場合は、展開したフォルダで次を実行します（`python` は macOS / Linux では `python3`、Windows では `py`）。
 
 ```bash
-python tools/integrate.py <既存プラグインのフォルダ>
+python tools/integrate.py ~/.claude/skills --skills-dir --force
 ```
 
-（`python` は macOS では `python3`、Windows では `py`）`<既存プラグイン>/skills/wikiskill/` に、動作に必要なもの（手順書・本体・ドキュメント・サンプル）がすべて入った 1 フォルダが作られます。
-ZIP のフォルダは後で消して構いません。利用者は `/<既存プラグイン名>:wikiskill` か、話しかけるだけで使えます。
-新しい版に更新するときは `--force` を付けて再実行します（WikiSkill 以外のフォルダは上書きしません）。
-Python を実行できない場合は、`skills/wikiskill` フォルダを `<既存プラグイン>/skills/` にコピーし、
-その中に `wikiskill`・`docs`・`examples` の 3 フォルダをコピーしても同じです。
+**B. プラグインとして入れる（GitHub に接続できる環境）**: Claude Code のチャット欄に
+`/plugin install wikiskill --marketplace R1ck29/wikiskill` と入力します（`/wikiskill:wikiskill` で呼び出せます）。
+A と B を両方入れると同じスキルが 2 つ並ぶので、どちらか一方にしてください。
 
-育ったスキルを社内に配るときも同じプラグインが使えます。`export` の書き出し先を `<既存プラグイン>/skills` にして配布してください。
+## 費用と API キー
 
-### 使うほど賢くなる（実際の利用からの自動改善）
+API キーで使う場合は、モデルの呼び出しごとに実際の料金がかかります（サブスクリプションでログインした claude ではプランの利用枠を使います）。
 
-```
- 育ったスキルで作業 → 利用者が「良い」「違う、正しくは…」と言う
-   → feedback: その依頼・結果・正解をスイートの feedback.jsonl に記録（Claude が自動で実行）
-   → 3 件たまると feedback が improve を裏で起動: 記録を学習用・検証用タスクに加え、同じワークスペースでスキルと wiki を
-     そのまま使って育成を続け（今のスキルで検証し直した点数を基準に）、点が上がったときだけ採用 → ~/.claude/skills を自動更新
-```
+- **育成 1 ラウンドの量**: 最初に val 件数分、その後 1 反復ごとに train＋val 件数分のエージェント実行があります。加えて
+  Wiki メンテナが 1 回（応答が壊れていれば最大 3 回）、スキル提案者が最大 20 回のテキスト生成を行い、`llm_judge` 採点なら採点 1 件につき 1 回増えます。
+  付属の例で 1 ラウンド（3 反復）の目安は、翻訳（train 4・val 3 件）が Sonnet 5.5 で約 1〜3 ドル、売上分析（train 8・val 6 件）が約 4〜12 ドルです
+  （Opus 5.5 ならその約 2 倍）。手動の実行は `--daily-budget` を付けない限り上限がないので、まず少数のタスクと `--iterations 2` で試してください。
+- **自動の改善**（`feedback` が起動する `improve`）: claude ではモデル `sonnet`（現在は Sonnet 5.5）を使い、**1 日 10 ドル**までに抑えます。
+  額は `improve --daily-budget USD` を一度実行すれば変わります。費用は CLI が報告する実際の額（`total_cost_usd`）で数えますが、
+  上限に達した時点で動いている呼び出しや、タイムアウト・中断で結果が返らなかった呼び出しの分は数えられないため、少し超えることがあります。
+  上限に達すると `paused` になり、翌日以降の最初の記録で続きから再開します。費用を報告しない codex では 1 日 1 回にします。
+- 自動の改善を止めたいときは、スイートの `improve.json` を消します。
 
-書き出したスキルの末尾には「結果の評価を WikiSkill に記録する」案内が付いているので、利用者が何も指示しなくても記録されます。
-`improve` は成功するたびに自分の設定（ワークスペース・モデル・書き出し先など）をスイートの `improve.json` に保存し（自動で起動された分は保存済みの設定を書き換えません）、
-`feedback` はその設定で `improve` を独立したプロセスとして起動します（会話や Claude を閉じても続き、出力は `<ワークスペース>/background.log`）。
-実行中に届いた記録は、終わった直後に次のラウンドとして続けて取り込みます。同時に動くのは 1 つだけで、実行中に起動された分は 1 つだけ順番待ちします。
-自動の実行は、claude では **Sonnet 5.5**（`claude-sonnet-5-5`）を使い、**1 日 10 ドル**までに抑えます（CLI が報告する実際の費用で数え、
-`improve --daily-budget` を指定して実行すればその額に変わります）。上限に達した時点で動いている呼び出しは最後まで走るので、少し超えることがあります。使い切ると区切りの良いところで止まり（`paused`）、
-翌日以降の最初の記録で続きから再開します（途中で止まったラウンドは、記録が `--min-new` 件たまるのを待たずに次の 1 件で再開します）。費用を報告しない codex では、自動の実行を 1 日 1 回にします。
-自動の実行が失敗すると、次の `feedback` が `warning: the last improve failed ...` と原因を表示します（上限で止まっても消えず、最後まで進んだ実行で消えます）。
-Python やパッケージが壊れていて読み込めないなど `improve` が始まる前に失敗したときは、`background.err` に残った内容を `warning: the last background start ...` として表示します（`background.log` は 1 MB を超えると末尾 256 KB に詰めます）。
-自動で起動したくない場合は `improve.json` を消します（毎回人が判定するスイートでは起動せず、`ready` と表示して手動の `improve` を待ちます）。
-上書きするのは WikiSkill が書き出したスキルだけです（同じ名前の自作スキルは上書きせずに知らせます）。
-正解が無い「違う」は、採点方法が `llm_judge`（または `script`）のスイートでだけ記録できます（数値などの採点では正しい答えを一言聞きます）。
+## コマンドで使う
 
-## 準備
+以降のコマンドは、リポジトリ（または展開した ZIP）のフォルダで実行します。`python` は macOS / Linux では `python3`、Windows では `py` に読み替えてください。
+Claude に話しかけて使う場合は、この章を読む必要はありません。
 
-1. **Python 3.9 以上**: ターミナルで `python3 --version`（Windows は `py --version`）を実行してバージョンを確認します。
-   入っていなければ社内の手順で Python をインストールしてください。
-2. **`claude` または `codex` コマンド**: `claude -p "hello"` または `codex exec "hello"` が返答すれば OK です。
-3. **WikiSkill の入手**（どちらか）:
-   - Git: `git clone https://github.com/R1ck29/wikiskill.git`
-   - ZIP: GitHub の「Code → Download ZIP」で取得して展開。Windows の「すべて展開」では
-     `wikiskill-main\wikiskill-main` のように二重フォルダになることがあるので、**`README.md` がある方のフォルダ**を使います。
-4. **ターミナルを開いてそのフォルダへ移動**します（以降のコマンドはすべてこのフォルダで実行）。
-   - Windows: エクスプローラーでフォルダを開き、アドレスバーに `powershell` と入力して Enter
-   - macOS: ターミナル.app で `cd ` と入力してからフォルダをウィンドウにドラッグし、Enter
-
-以降のコマンドは `python` と書いてあります。**macOS では `python3`、Windows では `py`** に読み替えてください。
-
-## クイックスタート（付属サンプル）
+### クイックスタート（付属サンプル）
 
 ```bash
 python -m wikiskill check --model sonnet
 ```
 
-`complete(): 'OK'` と `run_agent(): ok=True answer='42'` が出れば準備完了です（Codex は `--backend codex`）。
+`complete(): 'OK'` と `run_agent(): ok=True answer='42' sum.txt='42'` が出れば準備完了です（Codex は `--backend codex`）。
+失敗したときの対処は [docs/CONFIGURATION.md](docs/CONFIGURATION.md) の 1 章にあります。
 
 ```bash
 python -m wikiskill evolve examples/sales-analysis --workspace workspaces/sales --model haiku --iterations 4
@@ -138,7 +105,7 @@ test タスクでスキルなし／ありを比べ、差が偶然でないかを
 python -m wikiskill export workspaces/sales --dest ~/.claude/skills
 ```
 
-育ったスキルを書き出します（`export` で書き出したスキルは、後の `improve --export` でも自動更新されます）。書き出し先は使い方に合わせて選びます。
+育ったスキルを書き出します。書き出し先は使い方に合わせて選びます。
 
 | 使い方 | `--dest` |
 |---|---|
@@ -146,12 +113,14 @@ python -m wikiskill export workspaces/sales --dest ~/.claude/skills
 | Claude Code の特定プロジェクトで使う | `<そのプロジェクト>/.claude/skills` |
 | Codex で使う | `~/.agents/skills` または `<そのプロジェクト>/.agents/skills` |
 
-## 自分の業務で使う
+### 自分の業務で使う
 
 1. 同じ種類の業務（例:「月次売上の集計」「契約書の英訳」）を 1 つの**スイート**（フォルダ）にまとめ、
-   タスクと正解・採点方法を書きます。書き方と業務別の採点方法の選び方は [docs/SUITE_FORMAT.md](docs/SUITE_FORMAT.md) にあります。
+   タスクと正解・採点方法を書きます。`python -m wikiskill init <新しいフォルダ> --like sales-analysis --inputs <入力ファイルのフォルダ>`
+   で雛形を作れます。書き方と業務別の採点方法の選び方は [docs/SUITE_FORMAT.md](docs/SUITE_FORMAT.md) にあります。
 2. `python -m wikiskill check --suite <フォルダ> --no-call` で形式を確認します。
-3. 上のクイックスタートと同じ `evolve` → `evaluate` → `compare` → `export` の順に進めます。
+3. `python -m wikiskill improve <フォルダ> --workspace <ワークスペース> --export ~/.claude/skills` で育てて書き出します
+   （`evolve` と `export` を 1 度に行い、以後の `feedback` から自動で育て直す設定も保存します）。
 
 ### 正解を人が決める（2 つのモード）
 
@@ -170,32 +139,31 @@ python -m wikiskill review-apply my-suite review/review_sheet.csv
 
 tasks.jsonl に正解と採点基準が書き込まれます（最初の元ファイルは `tasks.jsonl.bak` に残ります）。
 
-**毎回人が判定**: `suite.json` に `"human_review": true` を書くか、`evolve` / `evaluate` に `--human-review on` を付けます。
-採点が必要になるたびにレビューシート（`evolve` は `<ワークスペース>/reviews/*.csv`、`evaluate` は `<--out>/review.csv`）が作られて
+**毎回人が判定**: `suite.json` に `"human_review": true` を書くか、`evolve` / `improve` / `evaluate` に `--human-review on` を付けます。
+採点が必要になるたびにレビューシート（`evolve` / `improve` は `<ワークスペース>/reviews/*.csv`、`evaluate` は `<--out>/review.csv`）が作られて
 処理が止まるので、`verdict` に `OK` / `NG` / 0〜1 の数値を入れて同じコマンドを再実行します。
 シートの `answer_key` 列は判定した出力の目印なので編集・削除しないでください（出力が変わったタスクは判定し直しになります）。
 `=` や `-` で始まる文字は Excel が数式として扱わないよう先頭に `'` が付いていますが、読み込み時に自動で外れます。
-`--human-review off` で自動採点に切り替えられます（その採点方法に必要な正解がタスクに入っていること）。
+このモードのスイートは自動の改善を行いません（`feedback` は `ready` と表示して手動の `improve` を待ちます）。
 
-## コマンド
+### コマンド一覧
 
 | コマンド | 用途 |
 |---|---|
 | `check` | Python・CLI・スイート（`--suite`）の確認。`--no-call` でモデルを呼ばない |
-| `evolve SUITE --workspace DIR` | スキルを育てる。再実行で再開、`--iterations` を増やせば延長 |
+| `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー |
+| `evolve SUITE --workspace DIR` | スキルを育てる。再実行で再開、`--iterations`（既定 8）を増やせば延長 |
+| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開し、`feedback` の記録が `--min-new`（既定 3）件以上（初回はすべて）あればタスクに加えて `--iterations`（既定 3）回続け、なければ書き出しだけ行う。`--daily-budget USD` で 1 日の費用に上限、`--wait` で実行中の処理の終了を待つ |
+| `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル）。記録がたまると `improve` を裏で起動し、`started` / `paused`（今日の上限に到達）/ `ready`（手動の `improve` が必要）と表示。前回の自動の改善が失敗していれば `warning` で原因を表示 |
 | `evaluate SUITE --out DIR` と `--workspace DIR` / `--skills DIR` / `--no-skills` のどれか | 指定したスキルで採点し `report.json` を出力（`--split` 既定 test） |
 | `compare A.json B.json` | 2 つの評価結果の差を検定 |
 | `review` / `review-apply` | ハイブリッド方式のレビュー |
 | `status DIR` | 反復ごとの採否と検証スコアを表示 |
 | `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し（`--suite SUITE` で、結果の評価をそのスイートに記録する案内も付ける） |
-| `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー |
-| `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル）。記録が `--min-new` 件たまると、前回の `improve` と同じ設定（claude ではモデルを Sonnet 5.5 に、1 日の上限つき）で裏で起動（止まったままのラウンドがあれば 1 件目で起動）。上限に達していれば `paused`、前回の `improve` が失敗していれば `warning` を表示 |
-| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開、記録が `--min-new`（既定 3）件以上（初回はすべて）ならタスクに加えて `--iterations`（既定 3）回続ける（終わるまでに記録がまたたまれば次のラウンドへ）、なければスキルを書き出すだけ。`--wait` で実行中の処理の終了を待つ。`--daily-budget USD` でこのワークスペースの 1 日の費用に上限を付ける（手動の実行は指定しなければ上限なし）。0.2 の `gen-NNN` 形式のワークスペースは一番新しいものを使い続ける |
 
 モデルを使うコマンド（`check`・`evolve`・`improve`・`evaluate`・`review`）では `--backend claude|codex`、`--model`、
 `--judge-model`（llm_judge の採点モデル）、`--backend-config`（CLI の引数を変える。[docs/CONFIGURATION.md](docs/CONFIGURATION.md)）が使えます。
-`evolve`・`improve`・`evaluate`・`review` には `--workers`（並列数、既定 4）、`evolve`・`improve`・`evaluate` には
-`--human-review on|off` もあります。全オプションは `python -m wikiskill <コマンド> --help` で確認できます。
+`evolve`・`improve`・`evaluate`・`review` には `--workers`（並列数、既定 4）もあります。全オプションは `python -m wikiskill <コマンド> --help` で確認できます。
 
 | 終了コード | 意味 | 対処 |
 |---|---|---|
@@ -204,7 +172,7 @@ tasks.jsonl に正解と採点基準が書き込まれます（最初の元フ�
 | 2 | 入力・設定のエラー（スイートやオプションの誤り） | メッセージに従って修正 |
 | 3 | 人のレビュー待ち | レビューシートを記入して再実行 |
 
-## 出力（ワークスペース）
+### 出力（ワークスペース）
 
 ```
 workspaces/sales/
@@ -215,25 +183,12 @@ workspaces/sales/
   wiki/skill-impact.md                 すべての提案の差分・検証スコア・採否
   raw/iter_NNN/traces/*.md             train の実行記録（書き換えない）
   runs/  reviews/  state.json  run.log 再開用データ、レビューシート、進捗、ログ
-  background.log                       feedback が自動で起動した improve の出力（1 MB を超えると末尾 256 KB に詰める）
-  background.err                       自動の起動が improve を始める前に出したエラー（起動のたびに空から）
+  background.log, background.err       自動の改善の出力と、起動直後のエラー
   spend.json                           上限つき（自動）の実行が今日使った費用
 ```
 
-`python -m wikiskill status workspaces/sales` で進捗を確認できます。
-業務データを含むため、保存先の扱いは [docs/CONFIGURATION.md](docs/CONFIGURATION.md) の 4 章を確認してください。
-
-## コストの目安
-
-最初に val 件数分、その後 1 反復ごとに train 件数＋val 件数分のエージェント実行があります
-（`improve` で記録がタスクに加わるたびに、今のスキルでの val 件数分が加わります）。
-加えて Wiki メンテナが 1 回（応答が壊れていた場合は最大 3 回）、スキル提案者が最大 20 回のテキスト生成を行い、
-`llm_judge` 採点なら採点 1 件につき 1 回の呼び出しが増えます。まず少数のタスクと `--iterations 2` で試してください。
-
-自動の 1 ラウンド（`improve` の既定 3 反復）の目安は、付属の例で API 料金に換算して、翻訳（train 4・val 3 件）が
-Sonnet 5.5 で約 1〜3 ドル、売上分析（train 8・val 6 件、表計算をするエージェント）が約 4〜12 ドルです（Opus 5.5 ならその約 2 倍）。
-エージェントが何ターン動くかで大きく変わるため、自動の実行は推定ではなく CLI が報告する実際の費用（claude の `total_cost_usd`）で
-1 日の上限を守ります。サブスクリプションでログインした claude では、料金の代わりにプランの利用枠を使います。
+`python -m wikiskill status workspaces/sales` で進捗を確認できます。ワークスペースは業務データを含むので、
+共有フォルダや Git に置かず、ローカルのドライブに置いてください（ネットワークドライブではファイルロックが使えないことがあります）。
 
 ## テスト
 
@@ -245,6 +200,7 @@ python -m unittest discover -s tests -t .
 
 ## ドキュメント
 
+- [INSTALL_PROMPT.md](INSTALL_PROMPT.md) / [CLAUDE.md](CLAUDE.md) — Claude に入れてもらうときの文章と、Claude が従う手順
 - [docs/SUITE_FORMAT.md](docs/SUITE_FORMAT.md) — 自分の業務のタスクと採点方法の書き方
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — CLI の設定、社内環境での注意点
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 仕組み、コード構成、論文との対応と差分
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 仕組み、自動改善の動き、コード構成、論文との対応と差分

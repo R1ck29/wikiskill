@@ -1,3 +1,4 @@
+import errno
 import json
 import subprocess
 import sys
@@ -269,6 +270,12 @@ class LockTest(TempDirTest):
         holder.stdout.close()
         with self.ws.lock():  # the file stays; only the OS lock counts
             self.assertTrue((self.ws.root / "evolve.lock").exists())
+
+    def test_a_drive_without_locks_fails_with_a_reason_instead_of_waiting(self):
+        name = "msvcrt.locking" if sys.platform == "win32" else "fcntl.flock"
+        with mock.patch(name, side_effect=OSError(errno.ENOLCK, "No locks available")), \
+                self.assertRaisesRegex(OSError, "local drive"), self.ws.lock(wait=True):
+            pass
 
     def test_waiting_runs_queue_one_at_a_time(self):
         order, queued = [], threading.Event()

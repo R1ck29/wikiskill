@@ -2,6 +2,7 @@ import argparse
 import contextlib
 import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,7 @@ from unittest import mock
 from tests.fakes import FakeBackend
 from tests.test_evolve import write_suite
 from wikiskill import cli
+from wikiskill.backends import AgentResult
 from wikiskill.cli import EXIT_CONFIG, EXIT_REVIEW, main
 from wikiskill.config import load_suite
 from wikiskill.evolve import Evolution, EvolveOptions
@@ -63,6 +65,27 @@ class CLITest(unittest.TestCase):
         code, out = run_cli("compare", self.root / "a.json", self.root / "b.json")
         self.assertEqual(code, 0)
         self.assertEqual(json.loads(out)["difference_b_minus_a"], 1.0)
+
+    def test_check_fails_when_the_agent_cannot_use_tools(self):
+        class Backend:
+            name, config = "stub", argparse.Namespace(command=sys.executable)
+
+            def __init__(self, writes):
+                self.writes = writes
+
+            def complete(self, prompt, system=None):
+                return "OK"
+
+            def run_agent(self, prompt, system, cwd):
+                if self.writes:
+                    (cwd / "sum.txt").write_text("42\n", encoding="utf-8")
+                return AgentResult("<answer>42</answer>", "", ok=True)
+
+        for writes, expected in ((True, 0), (False, 1)):
+            with mock.patch.object(cli, "make_backend", lambda *a, w=writes: Backend(w)):
+                code, out = run_cli("check")
+            self.assertEqual(code, expected, out)
+        self.assertIn("bypassPermissions", out)
 
     def test_check_suite_without_calls_and_config_errors(self):
         code, out = run_cli("check", "--suite", self.suite_dir, "--no-call", "--backend-config",

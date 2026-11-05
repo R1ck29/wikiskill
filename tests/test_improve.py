@@ -58,6 +58,13 @@ class FeedbackTest(TempDirTest):
             path.write_text("x", encoding="utf-8")
         return path
 
+    def test_a_damaged_queue_line_does_not_block_later_feedback(self):
+        (self.suite / "feedback.jsonl").write_text('{"id": "fb-cut", "prompt": "cut sh', encoding="utf-8")
+        with self.assertLogs("wikiskill.improve", "WARNING"):
+            code, out = self.feedback("--verdict", "good", "--prompt", "q", "--output", "4090")
+        self.assertEqual(code, 0, out)
+        self.assertEqual([r["prompt"] for r in pending(self.suite)], ["q"])
+
     def test_good_result_becomes_the_answer_and_files_are_copied(self):
         source = self.root / "jan.csv"
         source.write_text("a,b\n", encoding="utf-8")
@@ -217,7 +224,7 @@ class ImproveTest(TempDirTest):
         suite, saved = self.started.call_args[0]
         self.assertEqual((suite.root, saved), (self.suite.resolve(), settings))
         options = automatic_options(saved)
-        self.assertEqual((options["--model"], options["--daily-budget"]), ("claude-sonnet-5-5", "10.0"))
+        self.assertEqual((options["--model"], options["--daily-budget"]), ("sonnet", "10.0"))
         code, out = run_cli("improve", self.suite, "--workspace", saved["workspace"], "--min-new", 2,
                             *[item for pair in options.items() for item in pair], "--wait", "--automatic")
         self.assertEqual(code, 0, out)  # (what start_improve runs)
@@ -234,7 +241,7 @@ class ImproveTest(TempDirTest):
     def test_automatic_runs_use_sonnet_on_claude_and_keep_a_saved_budget(self):
         options = automatic_options({"args": ["--backend", "codex", "--model", "gpt-x", "--daily-budget", "2.5"]})
         self.assertEqual(options, {"--backend": "codex", "--model": "gpt-x", "--daily-budget": "2.5"})
-        self.assertEqual(automatic_options({"args": []}), {"--model": "claude-sonnet-5-5", "--daily-budget": "10.0"})
+        self.assertEqual(automatic_options({"args": []}), {"--model": "sonnet", "--daily-budget": "10.0"})
         for bad in ("-1", "0", "nan", "inf", "abc"):  # a hand-edited improve.json
             self.assertEqual(automatic_options({"args": ["--daily-budget", bad]})["--daily-budget"], "10.0")
 

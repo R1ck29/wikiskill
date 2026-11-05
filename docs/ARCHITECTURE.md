@@ -42,7 +42,7 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 `--min-new` 件に達すると同じ `improve` を `--wait` 付きの独立プロセスとして起動します（出力は `background.log`）。
 ワークスペースのロック（`evolve.lock`）は OS のファイルロックなので、強制終了やクラッシュでもプロセスが終われば外れ、手で消す必要はありません。
 `--wait` の実行は `improve.wait` のロックを持って 1 つだけ順番待ちし、2 つ目は「先に待っている実行が新しい記録も取り込む」ので何もせず終わります。
-自動の実行は claude では Sonnet 5.5 を使い、1 日の上限（`--daily-budget`、既定 10 ドル）を `backends.Budget` が守ります。
+自動の実行は claude ではモデル `sonnet`（別名なので Bedrock や社内ゲートウェイでもその環境の Sonnet に解決される）を使い、1 日の上限（`--daily-budget`、既定 10 ドル）を `backends.Budget` が守ります。
 各呼び出しが報告する費用をワークスペースの `spend.json` に足し、上限に達すると次の呼び出しの前に `BudgetExceeded` で止めます
 （再試行も採点もせず、完了した段階はそのまま残るので、次の実行が続きから進めます）。途中で止まったラウンドがあれば、`feedback` は
 `--min-new` 件を待たずに次の 1 件で `improve` を起動します（`improve.unfinished_round`。上限の確認も、0.2 の gen-NNN フォルダを `improve` と同じく対象にします。`background.log` は保存されたパスのままです）。費用を報告しない codex は 1 日 1 回にします。
@@ -50,8 +50,12 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 ゲートが別のモデルの点数と比べることはありません。失敗した `improve` は `improve.json` に時刻と原因を残し、次の `feedback` が知らせます（上限で止まった実行はそれを消さず、最後まで進んだ実行が消します）。
 自動の実行は隠しオプション `--automatic` 付きで起動され、保存済みの設定を書き換えず、`improve.json` が消されていれば作り直しません。
 子プロセスの stderr は起動のたびに空にする `background.err` に向けるので、`cli.main` がログを開く前の失敗（壊れた Python や読み込めないパッケージなど）も `feedback` が知らせます。
-自動の実行は `--log` で受け取った `background.log` を自分で追記モードで開くので（Windows でも末尾に書く）、起動のたびに大きくなりすぎた分を詰められます。
-記録の追加と取り込みは短いロック（スイートの `feedback.lock`）を順番に取るため、取り込み中に届いた記録も失われません。
+自動の実行は `--log` で受け取った `background.log` を自分で追記モードで開くので（Windows でも末尾に書く）、起動のたびに 1 MB を超えた分を末尾 256 KB に詰められます。
+Windows では隠れたコンソールで起動するので、CLI を呼ぶたびにウィンドウが開くことはありません。
+記録の追加と取り込みは短いロック（スイートの `feedback.lock`）を順番に取るため、取り込み中に届いた記録も失われません（クラッシュで途中まで書かれた行は読み飛ばし、残りの記録は使います）。
+ファイルロックが使えないドライブ（一部のネットワークドライブ）では、待ち続けずに理由を示して止まります。
+`feedback` の記録は、正解があれば（good の結果、または bad で示された正解）その正解に、正解の無い bad は「この応答は違うと言われた」という採点基準になります。後者は採点方法が `llm_judge` か `script` のスイートでだけ記録できます。
+書き出し（`improve --export`）が上書きするのは、WikiSkill が書き出したスキル（`skills.exported_by_wikiskill`）だけです。
 
 ### 各エージェントに見せる情報
 
@@ -81,18 +85,20 @@ wikiskill/
   workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、OS のファイルロックと順番待ち、旧 gen-NNN 形式の解決
   config.py       suite.json / tasks.jsonl の読み込みと検証
   backends.py     claude / codex CLI の呼び出し（タイムアウト・中断時のプロセス停止、再試行、報告された費用での 1 日の上限）
-  util.py         UTF-8 入出力、LLM 出力からの JSON 抽出、切り詰め、CSV のエスケープ
+  util.py         UTF-8 入出力、OS のファイルロック、LLM 出力からの JSON 抽出、切り詰め、CSV のエスケープ
   prompts/        Wiki メンテナとスキル提案者のシステムプロンプト（論文付録 E.2 / E.3）
 ```
 
-プラグインとしての配布物（README の「Claude のプラグインとして使う」）:
+配布と組み込みのためのファイル（README の「入れ方」）:
 
 ```
 .claude-plugin/plugin.json, marketplace.json   リポジトリ全体を 1 つのプラグイン兼マーケットプレイスにする
 skills/wikiskill/SKILL.md                      Claude が CLI を代わりに実行するための手順書（呼び出し時だけ読み込まれる）
 skills/wikiskill/scripts/run_wikiskill.py      起動スクリプト。スキルフォルダ内 → 親フォルダの順に wikiskill パッケージを探し、
                                                Python が 3.9 未満なら PATH 上の新しい python3.X で実行し直す
-tools/integrate.py                             既存プラグインへ、パッケージ・docs・examples を同梱した自己完結のスキルフォルダをコピー
+tools/integrate.py                             グローバル設定・プラグイン・プロジェクトへ、パッケージ・docs・examples を同梱した
+                                               自己完結のスキルフォルダをコピー（全体を作ってから入れ替えるので、失敗しても前の版が残る）
+CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼むときの手順と、利用者が貼り付ける文章
 ```
 
 依存の向きは `cli → improve → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → config/patching/workspace/util` の一方向です。

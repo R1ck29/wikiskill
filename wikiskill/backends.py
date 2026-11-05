@@ -272,7 +272,7 @@ def run_process(argv: list[str], stdin: str, cwd: Path, timeout: float) -> tuple
     npm-installed CLIs are .cmd shims (Windows) or wrapper scripts, so killing only the
     direct child would leave the real agent running and holding the output pipes.
     """
-    extra = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt"
+    extra = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW} if os.name == "nt"
              else {"start_new_session": True})
     with _LIVE_LOCK:  # checked under the lock so kill_all_running cannot miss a process
         if _STOP.is_set():

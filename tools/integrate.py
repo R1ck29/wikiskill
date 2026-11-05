@@ -1,8 +1,11 @@
-"""Copy WikiSkill into an existing Claude Code plugin as one self-contained skill folder.
+"""Copy WikiSkill into an existing Claude Code plugin, project or skills folder as one self-contained skill.
 
     python tools/integrate.py <plugin folder>                 -> <plugin>/skills/wikiskill/
+    python tools/integrate.py <project folder>                -> <project>/.claude/skills/wikiskill/
     python tools/integrate.py <skills folder> --skills-dir    -> <skills folder>/wikiskill/
     add --force to replace a WikiSkill copy made earlier (for updates)
+
+A plugin folder has .claude-plugin/plugin.json; a project folder has a .claude folder.
 
 The copy holds SKILL.md, the launcher, the `wikiskill` package, docs/ and examples/, so it works
 without this repository (unzip the repository ZIP anywhere, run this once, then delete the ZIP folder).
@@ -10,7 +13,10 @@ without this repository (unzip the repository ZIP anywhere, run this once, then 
 from __future__ import annotations
 
 import argparse
+import contextlib
+import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 
@@ -23,10 +29,12 @@ IGNORE = shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store")
 def destination(target: Path, skills_dir: bool) -> Path:
     if skills_dir:
         return target / SKILL_NAME
-    if not (target / ".claude-plugin" / "plugin.json").is_file():
-        raise ValueError(f"{target} is not a plugin folder (no .claude-plugin/plugin.json); "
-                         "pass --skills-dir to copy into a plain skills folder")
-    return target / "skills" / SKILL_NAME
+    if (target / ".claude-plugin" / "plugin.json").is_file():
+        return target / "skills" / SKILL_NAME
+    if (target / ".claude").is_dir():
+        return target / ".claude" / "skills" / SKILL_NAME
+    raise ValueError(f"{target} is neither a plugin folder (.claude-plugin/plugin.json) nor a project folder "
+                     "(.claude/); to copy into a folder of skills, pass that folder with --skills-dir")
 
 
 def integrate(target: Path, skills_dir: bool = False, force: bool = False) -> Path:
@@ -42,16 +50,42 @@ def integrate(target: Path, skills_dir: bool = False, force: bool = False) -> Pa
             raise FileExistsError(f"{dest} already exists; pass --force to replace it")
         if not (dest / LAUNCHER).is_file():  # never delete a folder this tool did not create
             raise FileExistsError(f"{dest} exists but is not a WikiSkill copy; remove or rename it first")
-        shutil.rmtree(dest)
-    shutil.copytree(REPO / "skills" / SKILL_NAME, dest, ignore=IGNORE)
-    for name in ("wikiskill", "docs", "examples"):
-        shutil.copytree(REPO / name, dest / name, ignore=IGNORE)
+    new, old = dest.with_name(f".{SKILL_NAME}.new"), dest.with_name(f".{SKILL_NAME}.old")
+    for leftover in (new, old):  # from an earlier run that was cut short
+        _remove(leftover)
+    try:  # build the whole copy first: a failed copy never costs the working one
+        shutil.copytree(REPO / "skills" / SKILL_NAME, new, ignore=IGNORE)
+        for name in ("wikiskill", "docs", "examples"):
+            shutil.copytree(REPO / name, new / name, ignore=IGNORE)
+    except BaseException:
+        _remove(new)
+        raise
+    if dest.exists():
+        dest.rename(old)
+    try:
+        new.rename(dest)
+    except OSError:  # e.g. a file held open on Windows: put the working copy back
+        if old.exists():
+            old.rename(dest)
+        _remove(new)
+        raise
+    with contextlib.suppress(OSError):  # a running improve may still hold old files; the next run removes them
+        _remove(old)
     return dest
+
+
+def _remove(path: Path) -> None:
+    """Delete a folder, including files a ZIP extract left read-only (Windows refuses to delete those)."""
+    def make_writable(func, failed, _exc):
+        os.chmod(failed, stat.S_IWRITE)
+        func(failed)
+    if path.exists():  # `onerror` is deprecated from Python 3.12 on, `onexc` does not exist before it
+        shutil.rmtree(path, **{"onexc" if sys.version_info >= (3, 12) else "onerror": make_writable})
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("target", type=Path, help="plugin folder (or skills folder with --skills-dir)")
+    parser.add_argument("target", type=lambda s: Path(s).expanduser(), help="plugin or project folder (or skills folder with --skills-dir); ~ is expanded")
     parser.add_argument("--skills-dir", action="store_true", help="target is a skills folder, not a plugin")
     parser.add_argument("--force", action="store_true", help="replace a WikiSkill copy made earlier")
     args = parser.parse_args(argv)
@@ -63,11 +97,10 @@ def main(argv: list[str] | None = None) -> int:
     except OSError as e:  # includes shutil.Error: disk full, permissions, locked files
         print(f"error: copy failed: {e}", file=sys.stderr)
         return 1
-    if args.skills_dir:
-        print(f"copied WikiSkill to {dest}\nstart a new Claude session to use it (/wikiskill)")
-    else:
-        print(f"copied WikiSkill to {dest}\n"
-              f"check: claude plugin validate \"{args.target}\"   (then restart Claude)")
+    launcher = dest / LAUNCHER
+    print(f"copied WikiSkill to {dest}\n"
+          f"check: python \"{launcher}\" check --no-call   (python3 on macOS/Linux, py on Windows)\n"
+          "then start a new Claude session; the skill is /wikiskill (in a plugin: /<plugin name>:wikiskill)")
     return 0
 
 
