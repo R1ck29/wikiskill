@@ -31,12 +31,13 @@ import subprocess
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
 from .config import ConfigError
-from .util import read_json, write_json
+from .util import locked, read_json, write_json
 
 log = logging.getLogger(__name__)
 
@@ -85,11 +86,13 @@ class Budget:
     """A daily limit in USD for budgeted runs, kept in a ledger file (<workspace>/spend.json).
 
     Spend is the cost each CLI call reports. A CLI that reports none (codex) cannot be
-    measured, so it gets one budgeted run a day instead.
+    measured, so it gets one budgeted run a day instead. A `shared` budget (the total of all
+    automatic runs) is charged and checked together with this one. Ledger updates hold an OS
+    lock, so runs of other workspaces that share a ledger never overwrite each other's spend.
     """
 
-    def __init__(self, path: Path, limit: float) -> None:
-        self.path, self.limit = Path(path), limit
+    def __init__(self, path: Path, limit: float, shared: Budget | None = None, label: str = "today's budget") -> None:
+        self.path, self.limit, self.shared, self.label = Path(path), limit, shared, label
         self._lock = threading.Lock()  # rollout workers share one budget
 
     def today(self) -> dict[str, Any]:
@@ -112,32 +115,46 @@ class Budget:
             return self._spent(day)
         if day["unpriced_calls"] and day["runs"]:
             return "the CLI reports no cost, so budgeted runs are limited to one a day"
-        return None
+        return self.shared.blocked() if self.shared else None
 
     def start_run(self) -> None:
-        with self._lock:
-            reason = self.blocked()
-            if reason:
-                raise BudgetExceeded(reason)
-            day = self.today()
-            write_json(self.path, {**day, "runs": day["runs"] + 1})
+        reason = self.blocked()
+        if reason:
+            raise BudgetExceeded(reason)
+        for budget in self._chain():
+            with budget._update() as day:
+                day["runs"] += 1
 
     def check(self) -> None:
-        """Raise BudgetExceeded before a call once today's spend reached the limit."""
-        day = self.today()
-        if day["usd"] >= self.limit:
-            raise BudgetExceeded(self._spent(day))
+        """Raise BudgetExceeded before a call once today's spend reached a limit."""
+        for budget in self._chain():
+            day = budget.today()
+            if day["usd"] >= budget.limit:
+                raise BudgetExceeded(budget._spent(day))
 
     def _spent(self, day: dict[str, Any]) -> str:
-        return f"today's budget of ${self.limit:.2f} is spent (${day['usd']:.2f})"
+        return f"{self.label} of ${self.limit:.2f} is spent (${day['usd']:.2f})"
 
     def add(self, usd: float | None) -> None:
-        with self._lock:
+        for budget in self._chain():
+            with budget._update() as day:
+                if usd is None:
+                    day["unpriced_calls"] += 1
+                else:
+                    day["usd"] = round(day["usd"] + usd, 6)
+
+    def _chain(self) -> list[Budget]:
+        return [self] + ([self.shared] if self.shared else [])
+
+    @contextlib.contextmanager
+    def _update(self) -> Iterator[dict[str, Any]]:
+        """Today's ledger to change in place; written back under the thread and OS locks."""
+        with self._lock, contextlib.ExitStack() as stack:
+            with contextlib.suppress(OSError):  # a drive without file locks: count without the OS lock
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                stack.enter_context(locked(self.path.with_name(self.path.name + ".lock")))
             day = self.today()
-            if usd is None:
-                day["unpriced_calls"] += 1
-            else:
-                day["usd"] = round(day["usd"] + usd, 6)
+            yield day
             write_json(self.path, day)
 
 

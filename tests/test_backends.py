@@ -214,6 +214,20 @@ class BudgetTest(FakeCLITestCase):
         self.assertIn("$1.00 is spent", Budget(self.ledger, 1.0).blocked())
         self.assertIsNone(Budget(self.ledger, 2.0).blocked())
 
+    def test_a_shared_budget_is_charged_and_checked_with_each_workspace(self):
+        total = Budget(self.ledger.with_name("total.json"), 1.0, label="the daily total of automatic runs")
+        first = Budget(self.ledger, 5.0, total)
+        second = Budget(self.ledger.with_name("other.json"), 5.0, total)
+        first.start_run()
+        first.add(0.75)
+        second.add(0.5)
+        self.assertEqual((first.today()["usd"], second.today()["usd"], total.today()["usd"]), (0.75, 0.5, 1.25))
+        self.assertEqual(total.today()["runs"], 1)
+        self.assertIn("the daily total of automatic runs of $1.00 is spent", second.blocked())
+        with self.assertRaises(BudgetExceeded):
+            second.check()  # its own $5 is far from spent
+        self.assertIsNone(Budget(self.ledger.with_name("other.json"), 5.0).blocked())  # a manual run is not limited
+
     def test_a_new_day_starts_from_zero(self):
         self.ledger.write_text(json.dumps({"date": "2000-01-01", "usd": 99.0, "unpriced_calls": 3, "runs": 5}),
                                encoding="utf-8")

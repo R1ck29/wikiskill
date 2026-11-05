@@ -13,6 +13,11 @@ Automatic runs use the `sonnet` alias on the claude CLI and a daily budget (AUTO
 that fails notes the error in improve.json (`record_failure`), and the next feedback reports it,
 as it does a background start that died before the improve command ran (BACKGROUND_ERR).
 An automatic run saves the settings it was started with, not its own policy options.
+All automatic runs together also stop for the day at AUTO_TOTAL_BUDGET (total_budget).
+
+A suite may also start with no tasks at all (`init --workspace`): its train/val tasks then come only
+from feedback, and the first round waits for FIRST_ROUND rows (rows_needed). Like the paper, that
+round starts from no skills and no wiki; unlike the paper, its tasks are real requests judged by the user.
 """
 from __future__ import annotations
 
@@ -59,6 +64,10 @@ MIN_NEW = 3  # pending feedback rows that start a new round (improve --min-new d
 ITERATIONS = 3  # iterations per improve round (improve --iterations default)
 AUTO_MODEL = {"claude": "sonnet"}  # model of automatic runs: the alias resolves on every provider (Bedrock too)
 AUTO_BUDGET = 10.0  # USD a day for automatic runs unless `improve --daily-budget` was saved
+AUTO_TOTAL_BUDGET = 20.0  # USD a day for all automatic runs of this user together
+# the first round of a suite without tasks: 4 train rows, so the Skill Proposer can read the 4 traces
+# its rule asks for (paper Appendix E.3, rule 4), and 2 val rows for the gate (merge_pending splits 2:1)
+FIRST_ROUND = 6
 
 
 def feedback_row(scorer_type: str, prompt: str, verdict: str, output: str | None = None,
@@ -142,12 +151,45 @@ def _rows(text: str) -> list[dict[str, Any]]:
 
 
 # ----- improve: rounds ----------------------------------------------------------------
-def merge_ready(suite_root: Path, tasks_path: Path, state: dict[str, Any] | None, iterations: int,
-                min_new: int) -> int:
-    """Merge pending feedback before the first run, or once the round is finished and enough rows wait."""
-    if state is not None and (not is_done(state, iterations) or len(pending(suite_root)) < max(min_new, 1)):
+def merge_ready(suite: Suite, state: dict[str, Any] | None, iterations: int, min_new: int) -> int:
+    """Merge pending feedback before the first run, or once the round is finished and enough rows wait.
+
+    A suite without train and val tasks waits for FIRST_ROUND rows before its first run.
+    """
+    if state is None:
+        needed = rows_to_start(suite)
+    elif is_done(state, iterations):
+        needed = max(min_new, 1)
+    else:
         return 0
-    return merge_pending(suite_root, tasks_path)
+    if len(pending(suite.root)) < needed:
+        return 0
+    return merge_pending(suite.root, suite.tasks_path)
+
+
+def startable(suite: Suite) -> bool:
+    """True when the suite has the train and val tasks a round needs."""
+    return bool(suite.split("train") and suite.split("val"))
+
+
+def rows_to_start(suite: Suite) -> int:
+    """Pending rows the first round of `suite` waits for: enough for both splits once merged
+    (row i goes to val when i % 3 == 2, so 3 rows bring the first val task and 1 the first train task)."""
+    has_train, has_val = bool(suite.split("train")), bool(suite.split("val"))
+    if has_val:
+        return 1
+    return 3 if has_train else FIRST_ROUND
+
+
+def rows_needed(suite: Suite, settings: dict[str, Any] | None) -> int:
+    """Pending rows that start the next round: FIRST_ROUND before a suite without tasks ever ran."""
+    try:
+        started = settings is not None and _workspace(settings).load_state() is not None
+    except (OSError, ValueError):  # damaged state: count as started, the usual threshold applies
+        started = True
+    if not started and not startable(suite):
+        return rows_to_start(suite)
+    return settings["min_new"] if settings else MIN_NEW
 
 
 def merge_pending(suite_root: Path, tasks_path: Path) -> int:
@@ -271,11 +313,12 @@ def _workspace(settings: dict[str, Any]) -> Workspace:
 
 def unfinished_round(settings: dict[str, Any], suite: Suite) -> bool:
     """True when the saved workspace stopped inside a round (paused, interrupted or failed): the next
-    feedback row starts it again even with fewer than min_new rows waiting."""
+    feedback row starts it again even with fewer than min_new rows waiting. A workspace without state
+    whose suite can start counts too: an improve stopped after merging rows but before the round began."""
     try:
         state = _workspace(settings).load_state()
         iterations = int(automatic_options(settings).get("--iterations", ITERATIONS))
-        return state is not None and has_work(state, suite, iterations)
+        return startable(suite) if state is None else has_work(state, suite, iterations)
     except (OSError, ValueError, KeyError, TypeError, AttributeError):  # damaged state: rows still count as usual
         return False
 
@@ -283,7 +326,17 @@ def unfinished_round(settings: dict[str, Any], suite: Suite) -> bool:
 def automatic_budget(settings: dict[str, Any]) -> Budget:
     """The budget the automatic run would spend from (the ledger lives in its workspace)."""
     limit = float(automatic_options(settings)["--daily-budget"])
-    return Budget(_workspace(settings).spend_path, limit)
+    return Budget(_workspace(settings).spend_path, limit, total_budget())
+
+
+def work_root() -> Path:
+    """The folder that holds the users' suites and workspaces (`list` looks here)."""
+    return Path.home() / "wikiskill-work"
+
+
+def total_budget() -> Budget:
+    """The shared budget of all automatic runs: AUTO_TOTAL_BUDGET a day, ledger in work_root()."""
+    return Budget(work_root() / "spend-total.json", AUTO_TOTAL_BUDGET, label="the daily total of automatic runs")
 
 
 def background_log(settings: dict[str, Any]) -> Path:

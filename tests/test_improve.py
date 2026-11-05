@@ -18,6 +18,7 @@ from wikiskill.config import ConfigError, load_suite
 from wikiskill.evolve import has_work, is_done
 from wikiskill.improve import (
     AUTO,
+    AUTO_TOTAL_BUDGET,
     BACKGROUND_ERR,
     FEEDBACK,
     MERGED,
@@ -29,6 +30,7 @@ from wikiskill.improve import (
     pending,
     record_feedback,
     start_improve,
+    total_budget,
     trim_log,
 )
 from wikiskill.skills import EXPORT_MARK
@@ -405,7 +407,7 @@ class ImproveTest(TempDirTest):
         ws.init()
         ws.save_state({"iteration": 2, "r_best": 0.5})
         self.add_feedback(3)
-        self.assertEqual(merge_ready(self.suite, self.suite / "tasks.jsonl", ws.load_state(), 3, 3), 0)
+        self.assertEqual(merge_ready(load_suite(self.suite), ws.load_state(), 3, 3), 0)
         self.assertEqual(len(pending(self.suite)), 3)
         self.assertTrue(has_work(ws.load_state(), load_suite(self.suite), 3))
 
@@ -560,6 +562,102 @@ class BackgroundStartTest(TempDirTest):
         trim_log(log, limit=5000, keep=90)  # no whole line in the tail
         self.assertEqual(log.read_bytes(), b"")
         trim_log(self.root / "missing.log")  # nothing to do
+
+
+class ColdStartTest(TempDirTest):
+    """A suite with no tasks learns from feedback alone (`init --workspace`)."""
+
+    def setUp(self):
+        super().setUp()
+        self.suite, self.ws, self.dest = self.root / "suite", self.root / "ws", self.root / "home" / "skills"
+        self.started = mock.Mock()
+        for target, value in (("wikiskill.cli.make_backend", lambda *a, **k: FakeBackend()),
+                              ("wikiskill.cli.start_improve", self.started)):
+            patcher = mock.patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        code, out = run_cli("init", self.suite, "--like", "sales-analysis", "--workspace", self.ws,
+                            "--export", self.dest)
+        self.assertEqual(code, 0, out)
+        self.assertIn("the first round starts by itself after 6 rows", out)
+        cfg = json.loads(read_text(write_suite(self.root / "template") / "suite.json"))
+        (self.suite / "suite.json").write_text(json.dumps(cfg), encoding="utf-8")  # what Claude edits
+
+    def feedback(self, i):
+        code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", f"real {i}", "--output", "TOTAL")
+        self.assertEqual(code, 0, out)
+        return out
+
+    def test_the_first_round_waits_for_six_rows_then_starts_by_itself(self):
+        self.assertEqual(read_text(self.suite / "tasks.jsonl"), "")
+        settings = load_settings(self.suite)
+        self.assertEqual((settings["workspace"], settings["min_new"]), (str(self.ws.resolve()), 3))
+        self.assertEqual(settings["args"], ["--export", str(self.dest.resolve())])
+        for i in range(5):
+            out = self.feedback(i)
+        self.assertIn("5 feedback row(s) wait for the next `improve` (a round starts at 6)", out)
+        self.started.assert_not_called()
+        code, out = run_cli("improve", self.suite, "--workspace", self.ws, "--export", self.dest)  # as SKILL.md C
+        self.assertEqual(code, 0, out)
+        self.assertIn("nothing to do: 5 feedback row(s) pending; a new round starts at 6", out)
+        self.assertIsNone(Workspace(self.ws).load_state())
+        self.assertIn("started: `improve` runs in the background", self.feedback(5))
+        suite, saved = self.started.call_args[0]
+        options = [item for pair in automatic_options(saved).items() for item in pair]
+        code, out = run_cli("improve", self.suite, "--workspace", saved["workspace"], "--min-new", 3, *options,
+                            "--workers", 1, "--wait", "--automatic")
+        self.assertEqual(code, 0, out)
+        self.assertIn("merged feedback: 6", out)
+        splits = [json.loads(line)["split"] for line in read_text(self.suite / "tasks.jsonl").splitlines()]
+        self.assertEqual(splits, ["train", "train", "val"] * 2)
+        state = Workspace(self.ws).load_state()
+        self.assertEqual(state["baseline"], 0.0)  # like the paper: no skills and no wiki at the start
+        self.assertIn(FEEDBACK_HEADING, read_text(self.dest / "report-total" / "SKILL.md"))
+        self.assertIn("(a round starts at 3)", self.feedback(6))  # from now on the usual --min-new
+
+    def test_the_daily_total_of_all_automatic_runs_pauses_every_suite(self):
+        for i in range(5):
+            self.feedback(i)
+        total_budget().add(AUTO_TOTAL_BUDGET)  # spent by the automatic runs of other suites
+        out = self.feedback(5)
+        self.assertIn("paused: the daily total of automatic runs of $20.00 is spent", out)
+        self.started.assert_not_called()
+        self.assertTrue((self.root / "home" / "wikiskill-work" / "spend-total.json").is_file())
+
+    def test_a_suite_with_only_train_tasks_waits_for_its_first_val_row(self):
+        tasks = [json.dumps({"id": f"t{i}", "split": "train", "prompt": f"q{i}", "answer": "TOTAL"}) for i in range(4)]
+        (self.suite / "tasks.jsonl").write_text("\n".join(tasks) + "\n", encoding="utf-8")
+        self.assertIn("(a round starts at 3)", self.feedback(0))
+
+    def test_a_first_round_that_stopped_after_the_merge_restarts_with_the_next_row(self):
+        for i in range(6):
+            self.feedback(i)
+        merge_pending(self.suite, self.suite / "tasks.jsonl")  # improve merged, then failed before the round
+        self.started.reset_mock()
+        self.assertIsNone(Workspace(self.ws).load_state())
+        self.assertIn("started", self.feedback(6))
+        self.started.assert_called_once()
+
+    def test_an_empty_suite_loads_only_when_asked(self):
+        with self.assertRaises(ConfigError):
+            load_suite(self.suite, require_answers=False)
+        self.assertEqual(load_suite(self.suite, require_answers=False, allow_empty=True).tasks, ())
+        self.assertEqual(run_cli("init", self.root / "s2", "--like", "sales-analysis", "--export", self.dest)[0], 2)
+
+    def test_list_shows_suites_with_their_feedback(self):
+        self.feedback(0)
+        (self.root / "work" / "broken").mkdir(parents=True)
+        (self.root / "work" / "broken" / "suite.json").write_text("{", encoding="utf-8")
+        target = self.root / "work" / "sales" / "suite"
+        target.parent.mkdir(parents=True)
+        self.suite.rename(target)
+        code, out = run_cli("list", "--root", self.root / "work")
+        self.assertEqual(code, 0, out)
+        self.assertIn("name: sales | scorer: exact | tasks train/val/test: 0/0/0 | feedback pending: 1 "
+                      "| automatic: on", out)
+        self.assertIn("task: sales questions", out)
+        self.assertIn("damaged", out)
+        self.assertIn("no suites in", run_cli("list")[1])  # default: ~/wikiskill-work (empty here)
 
 
 if __name__ == "__main__":

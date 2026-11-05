@@ -29,13 +29,15 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 
 育ったスキルを使い始めたあとも、利用者が結果に「良い」「違う、正しくは…」と言うだけで記録され（`feedback`）、
 3 件たまると裏で自動的に育て直します（`improve`。点が上がったときだけ採用し、書き出したスキルも更新）。
+**例を用意していない業務も、普段の作業結果への評価から始められます**。Claude が業務ごとのスイートを作って評価を記録し、
+6 件たまると最初の育成が自動で始まります（論文と同じくスキルも wiki も空から始め、評価された実際の依頼を train / val に使います）。
 詳しい構造・自動改善の動き・論文との対応は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) にあります。
 
 ## 入れ方
 
 どの方法でも、Python 3.9 以上と `claude`（または `codex`）コマンドが必要です（ターミナルで `claude -p "hello"` が返答すれば OK）。
 入れたあとは Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、Claude が下のコマンドを代わりに実行します。
-利用者の作業は**例のフォルダを伝えることだけ**で、正解が無い業務は Claude が採点基準を書いて自動採点し、
+利用者の作業は**例のフォルダを伝えるか、普段の作業結果を「良い」「違う」と評価することだけ**で、正解が無い業務は Claude が採点基準を書いて自動採点し、
 育ったスキルは `~/.claude/skills` に書き出されて全プロジェクトで使えるようになります。
 常に消費するのは 1 セッションあたり約 50 トークン（スキルの説明文）で、呼び出したときだけ約 850 トークン（手順書）が加わります。
 
@@ -60,10 +62,11 @@ API キーで使う場合は、モデルの呼び出しごとに実際の料金�
   Wiki メンテナが 1 回（応答が壊れていれば最大 3 回）、スキル提案者が最大 20 回のテキスト生成を行い、`llm_judge` 採点なら採点 1 件につき 1 回増えます。
   付属の例で 1 ラウンド（3 反復）の目安は、翻訳（train 4・val 3 件）が Sonnet 5.5 で約 1〜3 ドル、売上分析（train 8・val 6 件）が約 4〜12 ドルです
   （Opus 5.5 ならその約 2 倍）。手動の実行は `--daily-budget` を付けない限り上限がないので、まず少数のタスクと `--iterations 2` で試してください。
-- **自動の改善**（`feedback` が起動する `improve`）: claude ではモデル `sonnet`（現在は Sonnet 5.5）を使い、**1 日 10 ドル**までに抑えます。
-  額は `improve --daily-budget USD` を一度実行すれば変わります。費用は CLI が報告する実際の額（`total_cost_usd`）で数えますが、
+- **自動の改善**（`feedback` が起動する `improve`）: claude ではモデル `sonnet`（現在は Sonnet 5.5）を使い、業務（ワークスペース）ごとに**1 日 10 ドル**、
+  すべての業務の合計で**1 日 20 ドル**までに抑えます（合計は `~/wikiskill-work/spend-total.json` で数え、額は `improve.py` の `AUTO_TOTAL_BUDGET`）。
+  業務ごとの額は `improve --daily-budget USD` を一度実行すれば変わります。費用は CLI が報告する実際の額（`total_cost_usd`）で数えますが、
   上限に達した時点で動いている呼び出しや、タイムアウト・中断で結果が返らなかった呼び出しの分は数えられないため、少し超えることがあります。
-  上限に達すると `paused` になり、翌日以降の最初の記録で続きから再開します。費用を報告しない codex では 1 日 1 回にします。
+  上限に達すると `paused` になり、翌日以降の最初の記録で続きから再開します。費用を報告しない codex では、業務ごとにも、すべての業務の合計でも 1 日 1 回にします。
 - 自動の改善を止めたいときは、スイートの `improve.json` を消します。
 
 ## コマンドで使う
@@ -122,6 +125,12 @@ python -m wikiskill export workspaces/sales --dest ~/.claude/skills
 3. `python -m wikiskill improve <フォルダ> --workspace <ワークスペース> --export ~/.claude/skills` で育てて書き出します
    （`evolve` と `export` を 1 度に行い、以後の `feedback` から自動で育て直す設定も保存します）。
 
+例が無い業務は、`python -m wikiskill init <新しいフォルダ> --like translation-ja-en --workspace <ワークスペース> --export ~/.claude/skills`
+でタスクの無いスイートを作り、`suite.json`（業務の説明と採点基準）だけを直します。あとは `feedback` で記録した結果が train / val になり、
+6 件（train 4・val 2）たまった時点で最初の `improve` が自動で始まります。val が少ないうちは採否が偶然に左右されやすいので
+（論文の val は 10〜40 件）、育成が進むほど記録が val にも 3 件に 1 件ずつ加わって安定していきます。
+依頼文と添付ファイルだけで解き直せる業務に限られます（[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) の「例が無い業務の始め方」）。
+
 ### 正解を人が決める（2 つのモード）
 
 **ハイブリッド（推奨）**: 最初に 1 回だけ人がエージェントの出力を確認し、その結果を正解データにして以降は自動採点します。
@@ -151,9 +160,10 @@ tasks.jsonl に正解と採点基準が書き込まれます（最初の元フ�
 | コマンド | 用途 |
 |---|---|
 | `check` | Python・CLI・スイート（`--suite`）の確認。`--no-call` でモデルを呼ばない |
-| `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー |
+| `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー。`--workspace DIR`（と `--export DEST`）を付けると、タスクを書かずに `feedback` の記録だけで育て始める設定を保存 |
+| `list` | `~/wikiskill-work`（`--root DIR` で変更）にあるスイートの業務名・説明・タスク数・未取り込みの記録・自動の改善の有無を表示 |
 | `evolve SUITE --workspace DIR` | スキルを育てる。再実行で再開、`--iterations`（既定 8）を増やせば延長 |
-| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開し、`feedback` の記録が `--min-new`（既定 3）件以上（初回はすべて）あればタスクに加えて `--iterations`（既定 3）回続け、なければ書き出しだけ行う。`--daily-budget USD` で 1 日の費用に上限、`--wait` で実行中の処理の終了を待つ |
+| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開し、`feedback` の記録が `--min-new`（既定 3）件以上（初回はすべて。タスクの無いスイートの初回は 6 件以上）あればタスクに加えて `--iterations`（既定 3）回続け、なければ書き出しだけ行う。`--daily-budget USD` で 1 日の費用に上限、`--wait` で実行中の処理の終了を待つ |
 | `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル）。記録がたまると `improve` を裏で起動し、`started` / `paused`（今日の上限に到達）/ `ready`（手動の `improve` が必要）と表示。前回の自動の改善が失敗していれば `warning` で原因を表示 |
 | `evaluate SUITE --out DIR` と `--workspace DIR` / `--skills DIR` / `--no-skills` のどれか | 指定したスキルで採点し `report.json` を出力（`--split` 既定 test） |
 | `compare A.json B.json` | 2 つの評価結果の差を検定 |

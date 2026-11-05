@@ -20,7 +20,10 @@ from .config import ConfigError, Suite, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import Evolution, EvolveOptions, has_work
 from .improve import (
+    AUTO,
     BACKGROUND_ERR,
+    FEEDBACK,
+    FIRST_ROUND,
     ITERATIONS,
     MIN_NEW,
     automatic_budget,
@@ -33,9 +36,14 @@ from .improve import (
     pending,
     record_failure,
     record_feedback,
+    rows_needed,
+    rows_to_start,
     save_settings,
     start_improve,
+    startable,
+    total_budget,
     unfinished_round,
+    work_root,
 )
 from .review import apply_sheet, collect
 from .scoring import HumanReviewPending, extract_answer
@@ -169,7 +177,15 @@ def _add_helper_commands(sub: Any) -> None:
     p.add_argument("suite", type=_path, help="new suite folder")
     p.add_argument("--like", choices=sorted(EXAMPLES), required=True, help="example to start from")
     p.add_argument("--inputs", type=_path, help="folder whose files become the suite's input files")
+    p.add_argument("--workspace", type=_path,
+                   help="learn from feedback alone: feedback starts `improve` with this workspace by itself "
+                        f"(the first round after {FIRST_ROUND} rows)")
+    p.add_argument("--export", type=_path, help="with --workspace: copy the skills here, e.g. ~/.claude/skills")
     p.set_defaults(func=cmd_init)
+
+    p = sub.add_parser("list", help="list the suites in a folder with their feedback and automatic start")
+    p.add_argument("--root", type=_path, default=None, help="folder to look in (default ~/wikiskill-work)")
+    p.set_defaults(func=cmd_list)
 
     p = sub.add_parser("feedback", help="queue a judged real-world result for the next `improve`")
     p.add_argument("suite", type=_path)
@@ -239,9 +255,9 @@ def _backends(args: argparse.Namespace, budget: Budget | None = None):
     return backend, judge
 
 
-def _suite(args: argparse.Namespace, require_answers: bool = True):
+def _suite(args: argparse.Namespace, require_answers: bool = True, allow_empty: bool = False):
     human = getattr(args, "human_review", None)
-    return load_suite(args.suite, require_answers, None if human is None else human == "on")
+    return load_suite(args.suite, require_answers, None if human is None else human == "on", allow_empty)
 
 
 # ----- commands --------------------------------------------------------------------
@@ -251,10 +267,13 @@ def cmd_check(args: argparse.Namespace) -> int:
         print("error: Python 3.9 or newer is required", file=sys.stderr)
         return EXIT_CONFIG
     if args.suite:
-        suite = load_suite(args.suite, require_answers=False)
+        suite = load_suite(args.suite, require_answers=False, allow_empty=True)
         counts = {s: len(suite.split(s)) for s in ("train", "val", "test")}
         print(f"suite '{suite.name}': {counts}, scorer={suite.scorer['type']}, human_review={suite.human_review}")
-        load_suite(args.suite)  # strict check: answers present for the scorer
+        if suite.tasks:
+            load_suite(args.suite)  # strict check: answers present for the scorer
+        else:
+            print(f"  no tasks yet: they come from feedback (the first round starts at {FIRST_ROUND} rows)")
     backend, _ = _backends(args)
     exe = shutil.which(backend.config.command)
     print(f"backend {backend.name}: command {backend.config.command!r} -> {exe or 'NOT FOUND'}")
@@ -306,10 +325,11 @@ def cmd_improve(args: argparse.Namespace) -> int:
 
 
 def _cmd_improve(args: argparse.Namespace) -> int:
-    suite = _suite(args, require_answers=False)  # checked strictly in _evolve_round, after the merge
+    suite = _suite(args, require_answers=False, allow_empty=True)  # checked strictly in _evolve_round
     ws = resolve_workspace(args.workspace)
     ws.init()
-    budget = Budget(ws.spend_path, args.daily_budget) if args.daily_budget else None
+    shared = total_budget() if args.automatic else None  # all automatic runs together
+    budget = Budget(ws.spend_path, args.daily_budget, shared) if args.daily_budget else None
     paused = False
     try:
         with ws.lock(wait=args.wait):
@@ -344,16 +364,17 @@ def _improve(args: argparse.Namespace, ws: Workspace, suite: Suite, budget: Budg
     rounds = 0
     while True:  # feedback recorded during a round starts the next one right away
         state = ws.load_state()
-        merged = merge_ready(suite.root, suite.tasks_path, state, args.iterations, args.min_new)
+        merged = merge_ready(suite, state, args.iterations, args.min_new)
         if merged:
-            suite = _suite(args, require_answers=False)
-        if not has_work(state, suite, args.iterations):
+            suite = _suite(args, require_answers=False, allow_empty=True)
+        if not has_work(state, suite, args.iterations) or (state is None and not startable(suite)):
             break
         _evolve_round(args, ws, merged, budget)
         rounds += 1
     if not rounds:
+        needed = args.min_new if ws.load_state() or startable(suite) else rows_to_start(suite)
         print(f"nothing to do: {len(pending(suite.root))} feedback row(s) pending; "
-              f"a new round starts at {args.min_new}")
+              f"a new round starts at {needed}")
 
 
 def _improve_args(args: argparse.Namespace) -> list[str]:
@@ -419,26 +440,58 @@ def cmd_init(args: argparse.Namespace) -> int:
         raise ConfigError(f"{args.suite / 'suite.json'} already exists")
     if args.inputs is not None and not args.inputs.is_dir():
         raise FileNotFoundError(f"--inputs {args.inputs} is not a folder")
+    if args.export and not args.workspace:
+        raise ConfigError("--export needs --workspace")
     example = EXAMPLES[args.like]
     args.suite.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(example / "suite.json"), str(args.suite / "suite.json"))
+    tasks = args.suite / "tasks.jsonl"  # the name the bundled examples use
+    if not tasks.exists():
+        tasks.write_text("", encoding="utf-8")
     files_dir = args.suite / "files"
     if args.inputs is not None:
         shutil.copytree(str(args.inputs), str(files_dir), dirs_exist_ok=True)
     files_dir.mkdir(exist_ok=True)
     files = sorted(p.relative_to(files_dir).as_posix() for p in files_dir.rglob("*") if p.is_file())
-    print(f"created {args.suite} from {example}\nnext: edit suite.json and write tasks.jsonl "
-          f"(example tasks: {example / 'tasks.jsonl'})\ninput files ({len(files)}): {', '.join(files[:20])}"
+    print(f"created {args.suite} from {example}\ninput files ({len(files)}): {', '.join(files[:20])}"
           + (" ..." if len(files) > 20 else ""))
+    if args.workspace:  # the settings a manual improve would save: feedback starts improve with them
+        options = ["--export", str(args.export.resolve())] if args.export else []
+        save_settings(args.suite, (args.workspace, MIN_NEW, options))
+        print(f"next: edit suite.json; tasks come from feedback, and the first round starts by itself "
+              f"after {FIRST_ROUND} rows (workspace: {args.workspace.resolve()})")
+    else:
+        print(f"next: edit suite.json and write tasks.jsonl (example tasks: {example / 'tasks.jsonl'})")
+    return 0
+
+
+def cmd_list(args: argparse.Namespace) -> int:
+    root = args.root or work_root()
+    found = sorted(root.glob("*/suite.json")) + sorted(root.glob("*/suite/suite.json"))
+    if not found:
+        print(f"no suites in {root}")
+        return 0
+    for suite_file in found:
+        try:
+            suite = load_suite(suite_file, require_answers=False, allow_empty=True)
+        except (ConfigError, OSError, ValueError) as e:
+            print(f"{suite_file.parent}: damaged ({e})")
+            continue
+        counts = "/".join(str(len(suite.split(s))) for s in ("train", "val", "test"))
+        auto = "on" if (suite.root / AUTO).is_file() and not suite.human_review else "off"
+        print(f"{suite.root}\n  name: {suite.name} | scorer: {suite.scorer['type']} | tasks train/val/test: {counts} "
+              f"| feedback pending: {len(pending(suite.root)) if (suite.root / FEEDBACK).is_file() else 0} "
+              f"| automatic: {auto}\n  task: {suite.task_description}")
     return 0
 
 
 def cmd_feedback(args: argparse.Namespace) -> int:
-    suite = load_suite(args.suite, require_answers=False)
+    suite = load_suite(args.suite, require_answers=False, allow_empty=True)
     task_id, count = record_feedback(suite, args.prompt, args.verdict, args.output, args.correct, args.note,
                                      args.file)
-    print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve`")
     settings = load_settings(suite.root)
+    needed = rows_needed(suite, settings)
+    print(f"recorded {task_id}; {count} feedback row(s) wait for the next `improve` (a round starts at {needed})")
     if settings and settings.get("last_error"):
         error = settings["last_error"]
         print(f"warning: the last improve failed at {error.get('time')}: {error.get('message')} "
@@ -447,7 +500,7 @@ def cmd_feedback(args: argparse.Namespace) -> int:
     if early:
         print(f"warning: the last background start wrote errors before improve opened its log: {early} "
               f"(details: {background_log(settings).with_name(BACKGROUND_ERR)})")
-    if count < (settings["min_new"] if settings else MIN_NEW) and not (settings and unfinished_round(settings, suite)):
+    if count < needed and not (settings and unfinished_round(settings, suite)):
         return 0
     if settings and not suite.human_review:
         try:

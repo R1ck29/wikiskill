@@ -1,8 +1,10 @@
 """Test helpers: a scripted in-process backend for loop tests (no CLI, no network), temp-folder tests."""
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from wikiskill.backends import AgentResult
 
@@ -48,7 +50,9 @@ class FakeBackend:
             self.crash_proposer_once = False
             raise RuntimeError("simulated crash")
         reads = prompt.count('"tool": "read_file"')
-        paths = ["wiki/index.md", "traces/t1", "traces/t2", "traces/t3", "traces/t4"]
+        context = prompt.split("# Initial context", 1)[1].split("## Turn 1", 1)[0]
+        ids = re.findall(r"^\| (\S+) \| (?:PASS|FAIL) \|", context, re.MULTILINE)
+        paths = ["wiki/index.md"] + [f"traces/{task_id}" for task_id in ids[:4]]
         if reads < len(paths):
             return json.dumps({"thought": "look", "tool": "read_file", "path": paths[reads]})
         if "be-careful" in prompt.split("# Initial context", 1)[1].split("## Turn 1", 1)[0]:
@@ -66,3 +70,6 @@ class TempDirTest(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.root = Path(tmp.name)
+        home = mock.patch.dict("os.environ", {"HOME": str(self.root / "home"), "USERPROFILE": str(self.root / "home")})
+        home.start()  # nothing a test runs may write to the real ~/wikiskill-work (the shared ledger)
+        self.addCleanup(home.stop)

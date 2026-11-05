@@ -51,13 +51,14 @@ class Suite:
 
 
 def load_suite(
-    path: Path, require_answers: bool = True, human_review: bool | None = None
+    path: Path, require_answers: bool = True, human_review: bool | None = None, allow_empty: bool = False
 ) -> Suite:
     """Load `suite.json` (or a directory containing it) and validate everything.
 
     Answers are not required when humans review every result (`human_review`) or when
     collecting reference answers with the `review` command (`require_answers=False`).
     `human_review` overrides the suite's own setting (CLI --human-review on/off).
+    `allow_empty` accepts a tasks file without tasks: a suite that learns only from feedback starts so.
     """
     path = Path(path)
     suite_file = path / "suite.json" if path.is_dir() else path
@@ -75,7 +76,7 @@ def load_suite(
         if not isinstance(human_review, bool):
             raise ConfigError("suite.json: 'human_review' must be true or false")
     check_answers = require_answers and not human_review
-    tasks = load_tasks(tasks_path, files_dir, scorer["type"] if check_answers else None)
+    tasks = load_tasks(tasks_path, files_dir, scorer["type"] if check_answers else None, allow_empty)
     return Suite(
         name=_require_str(cfg, "name"),
         root=root,
@@ -90,7 +91,8 @@ def load_suite(
     )
 
 
-def load_tasks(tasks_path: Path, files_dir: Path, scorer_type: str | None) -> tuple[Task, ...]:
+def load_tasks(tasks_path: Path, files_dir: Path, scorer_type: str | None,
+               allow_empty: bool = False) -> tuple[Task, ...]:
     """Parse the JSONL tasks file; `scorer_type=None` skips the answer-presence check."""
     if not tasks_path.is_file():
         raise ConfigError(f"tasks file not found: {tasks_path}")
@@ -107,7 +109,7 @@ def load_tasks(tasks_path: Path, files_dir: Path, scorer_type: str | None) -> tu
             raise ConfigError(f"{tasks_path.name}:{lineno}: duplicate task id {task.id!r} (case-insensitive)")
         seen.add(task.id.lower())
         tasks.append(task)
-    if not tasks:
+    if not tasks and not allow_empty:
         raise ConfigError(f"{tasks_path} has no tasks")
     return tuple(tasks)
 
