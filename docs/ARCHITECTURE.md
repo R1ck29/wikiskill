@@ -59,6 +59,19 @@ Windows では隠れたコンソールで起動するので、CLI を呼ぶた�
 台帳の更新は OS のファイルロックの中で行うので、別の業務の実行と同時に書いても費用が消えません（ロックが使えないドライブではロックなしで数えます）。
 書き出し（`improve --export`）が上書きするのは、WikiSkill が書き出したスキル（`skills.exported_by_wikiskill`）だけです。
 
+### タスクの自動振り分け
+
+論文は train / val / test を前もって固定し（どのベンチマークも train:val がおよそ 2:1）、test を大きく取って結果の報告だけに使います。
+実務ではタスクが少しずつ増え、分け方を毎回考えるのは負担なので、`split` を書かないタスクは WikiSkill が決めます（`splits.py`）。
+
+- **いつ**: スイートを読み込むとき（`config.load_suite`）と、評価の記録を取り込むとき（`improve.merge_pending`）。決めた split は tasks.jsonl に書き戻し、
+  後から動かさない（動くと val の点数を比べられなくなる）。手で書いた split はそのまま使う。最初の書き換えの前に `tasks.jsonl.bak` を残す。
+- **train と val**: 2:1（論文の比率）。評価の記録は「良い」「違う」ごとに 2:1 に分けるので、利用者が違うと言った結果も val に入り、
+  ゲートが「簡単な依頼だけで満点」になりにくい。分けた結果 train か val が空になるときは 1 件を移して、ラウンドを始められるようにする。
+- **test**: タスクが `TEST_FROM`（40）件になってから、5 件に 1 件だけ。test は育成に使わず、依頼されたときの `evaluate`・`compare` にしか使わないので、
+  少ないうちは学習と、ぶれにくいゲートに回す方が役に立つ。40 件の時点で val はおよそ 13 件（論文の最小の val 10 件を超える）。
+- **順番**: 書かれた順ではなく id のハッシュ順に振り分ける（月ごとに並んだ例が train と val に偏らないように）。どの環境でも同じ結果になる。
+
 ### 例が無い業務の始め方
 
 論文は正解付きの train / val / test を前もって用意し（例: train 16〜80、val 10〜40 件）、スキルも wiki も空から育てます。
@@ -67,8 +80,8 @@ Windows では隠れたコンソールで起動するので、CLI を呼ぶた�
 
 1. `init --workspace W [--export DEST]` が、タスクの無いスイート（空の tasks.jsonl）と `improve.json` を作る。手動の `improve` を実行していなくても、
    `feedback` が `improve` を自動で起動できるようになる。
-2. 評価の記録は train と val に 2:1 で分かれる。最初のラウンドは記録が `FIRST_ROUND`（6）件、つまり train 4・val 2 件そろうまで待つ
-   （`improve.rows_needed` / `merge_ready`。train だけ書かれたスイートは val が 1 件入る 3 件）。取り込んだ後にラウンドが始まる前に止まった `improve` は、次の記録 1 件で起動し直す（`improve.unfinished_round`）。4 件は、スキル提案者が実行記録を 4 件以上読むという規則（付録 E.3 の規則 4）を満たす最小の数。
+2. 評価の記録は上の「タスクの自動振り分け」で train と val に分かれる。最初のラウンドは記録が `FIRST_ROUND`（6）件、つまり train 4・val 2 件そろうまで待つ
+   （良い・違うの内訳によらず 4 と 2。`improve.rows_needed` / `merge_ready`。train か val だけ書かれたスイートは足りない側が 1 件入れば始まる）。取り込んだ後にラウンドが始まる前に止まった `improve` は、次の記録 1 件で起動し直す（`improve.unfinished_round`）。4 件は、スキル提案者が実行記録を 4 件以上読むという規則（付録 E.3 の規則 4）を満たす最小の数。
 3. 最初のラウンドは論文と同じく、スキルなしで val を解いた点数を R_best にして始める。以後は `--min-new`（3）件ごとに新しいラウンドに入り、
    val も 3 件に 1 件ずつ増える。
 4. どの業務のスイートに記録するかは、スキルの手順書に従って Claude が決める（`list` で既存の業務を見て、入力・出力・良し悪しの基準が同じなら同じスイート）。
@@ -109,6 +122,7 @@ wikiskill/
   patching.py     append / replace / insert_after の部分編集と差分（wiki とスキルで共用）
   workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、OS のファイルロックと順番待ち、旧 gen-NNN 形式の解決
   config.py       suite.json / tasks.jsonl の読み込みと検証
+  splits.py       split を書かないタスクの train / val / test の自動振り分け
   backends.py     claude / codex CLI の呼び出し（タイムアウト・中断時のプロセス停止、再試行、報告された費用での 1 日の上限）
   util.py         UTF-8 入出力、OS のファイルロック、LLM 出力からの JSON 抽出、切り詰め、CSV のエスケープ
   prompts/        Wiki メンテナとスキル提案者のシステムプロンプト（論文付録 E.2 / E.3）

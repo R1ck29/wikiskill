@@ -39,8 +39,8 @@ Windows は `python3` を `py`、無ければ `python` に）。
 1. 利用者に「例が入ったフォルダ」を 1 つ聞く（入力ファイルと、あれば正解）。
 2. `WS init S --like sales-analysis --inputs <例のフォルダ>`（数値の答え。文章の業務は `--like translation-ja-en`）で
    `S` を作る（入力ファイルは `S/files/` にコピーされ、一覧が表示される）。`S/suite.json` を業務に合わせて直し、
-   `S/tasks.jsonl` を 1 行 1 件で書く（書式は表示された完成例の tasks.jsonl と同じ。分割の目安: train 半分、
-   val 4 分の 1、test 4 分の 1。各 1 件以上。少なければ test を減らす）。
+   `S/tasks.jsonl` を 1 行 1 件で書く（書式は表示された完成例の tasks.jsonl と同じ。**`split` は書かない**:
+   読み込み時に自動で train / val / test に分けられる。例は 3 件以上、できれば 10 件以上）。
    - `system_prompt` には `{skill_section}` と「最終回答を `<answer>...</answer>` で囲む」指示を残す。
    - 採点: 正解があり数値→`number`、決まった文言→`exact`/`contains`、出力ファイルの検査→`script`。
      **正解が無い・文章の業務は `llm_judge`** にし、例と利用者の説明から「良い結果の条件」を具体的に `rubric` に書く

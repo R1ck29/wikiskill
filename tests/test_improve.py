@@ -199,7 +199,8 @@ class ImproveTest(TempDirTest):
         self.assertIn("merged feedback: 3", out)
         self.assertEqual(list(self.ws.glob("gen-*")), [])  # no copies: the same workspace goes on
         tasks = [json.loads(line) for line in read_text(self.suite / "tasks.jsonl").splitlines()]
-        self.assertEqual([t["split"] for t in tasks[8:]], ["train", "train", "val"])
+        self.assertEqual(sorted(t["split"] for t in tasks[8:]), ["train", "train", "val"])  # 2:1
+        self.assertEqual({t["verdict"] for t in tasks[8:]}, {"good"})
         self.assertEqual(len(read_text(self.suite / "tasks.jsonl.bak").splitlines()), 8)
         self.assertEqual(pending(self.suite), [])
         self.assertEqual(len(read_text(self.suite / MERGED).splitlines()), 3)
@@ -609,7 +610,7 @@ class ColdStartTest(TempDirTest):
         self.assertEqual(code, 0, out)
         self.assertIn("merged feedback: 6", out)
         splits = [json.loads(line)["split"] for line in read_text(self.suite / "tasks.jsonl").splitlines()]
-        self.assertEqual(splits, ["train", "train", "val"] * 2)
+        self.assertEqual(sorted(splits), ["train"] * 4 + ["val"] * 2)
         state = Workspace(self.ws).load_state()
         self.assertEqual(state["baseline"], 0.0)  # like the paper: no skills and no wiki at the start
         self.assertIn(FEEDBACK_HEADING, read_text(self.dest / "report-total" / "SKILL.md"))
@@ -624,10 +625,12 @@ class ColdStartTest(TempDirTest):
         self.started.assert_not_called()
         self.assertTrue((self.root / "home" / "wikiskill-work" / "spend-total.json").is_file())
 
-    def test_a_suite_with_only_train_tasks_waits_for_its_first_val_row(self):
+    def test_a_suite_with_only_train_tasks_starts_with_its_first_row(self):
         tasks = [json.dumps({"id": f"t{i}", "split": "train", "prompt": f"q{i}", "answer": "TOTAL"}) for i in range(4)]
         (self.suite / "tasks.jsonl").write_text("\n".join(tasks) + "\n", encoding="utf-8")
-        self.assertIn("(a round starts at 3)", self.feedback(0))
+        self.assertIn("(a round starts at 1)", self.feedback(0))
+        merge_pending(self.suite, self.suite / "tasks.jsonl")
+        self.assertEqual(json.loads(read_text(self.suite / "tasks.jsonl").splitlines()[-1])["split"], "val")
 
     def test_a_first_round_that_stopped_after_the_merge_restarts_with_the_next_row(self):
         for i in range(6):

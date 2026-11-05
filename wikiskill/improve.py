@@ -39,6 +39,7 @@ from .backends import Budget
 from .config import ANSWER_REQUIRED, ConfigError, Suite
 from .evolve import has_work, is_done
 from .skills import copy_skills, exported_by_wikiskill
+from .splits import SPLIT_LOCK, assign
 from .util import (
     append_text,
     backup_once,
@@ -53,7 +54,7 @@ from .workspace import Workspace, resolve_workspace
 
 log = logging.getLogger(__name__)
 FEEDBACK = "feedback.jsonl"
-QUEUE_LOCK = "feedback.lock"  # held while the queue is appended to, read or merged
+QUEUE_LOCK = SPLIT_LOCK  # held while the queue is appended to, read or merged, and splits are filled
 MERGED = "feedback-merged.jsonl"  # history of rows already moved into the tasks file
 AUTO = "improve.json"  # settings of the last improve, reused by the automatic start
 BACKGROUND_LOG = "background.log"  # automatic-run output, at the workspace path saved in improve.json
@@ -66,13 +67,16 @@ AUTO_MODEL = {"claude": "sonnet"}  # model of automatic runs: the alias resolves
 AUTO_BUDGET = 10.0  # USD a day for automatic runs unless `improve --daily-budget` was saved
 AUTO_TOTAL_BUDGET = 20.0  # USD a day for all automatic runs of this user together
 # the first round of a suite without tasks: 4 train rows, so the Skill Proposer can read the 4 traces
-# its rule asks for (paper Appendix E.3, rule 4), and 2 val rows for the gate (merge_pending splits 2:1)
+# its rule asks for (paper Appendix E.3, rule 4), and 2 val rows for the gate (splits.assign shares 2:1)
 FIRST_ROUND = 6
 
 
 def feedback_row(scorer_type: str, prompt: str, verdict: str, output: str | None = None,
                  correct: str | None = None, note: str | None = None) -> dict[str, Any]:
-    """Build the task fields (without id/files/split) for one judged real result."""
+    """Build the task fields (without id/files/split) for one judged real result.
+
+    `verdict` stays in the row so splits.assign can share good and bad results 2:1 between train and val.
+    """
     if not prompt.strip():
         raise ConfigError("feedback needs the request text (--prompt)")
     if verdict == "good":
@@ -92,7 +96,7 @@ def feedback_row(scorer_type: str, prompt: str, verdict: str, output: str | None
         row["answer"] = re.escape(row["answer"])
     if note:
         row["rubric"] = (row.get("rubric", "") + f" User's note: {note}").strip()
-    return row
+    return {"verdict": verdict, **row}
 
 
 def record_feedback(suite: Suite, prompt: str, verdict: str, output: str | None = None,
@@ -173,12 +177,9 @@ def startable(suite: Suite) -> bool:
 
 
 def rows_to_start(suite: Suite) -> int:
-    """Pending rows the first round of `suite` waits for: enough for both splits once merged
-    (row i goes to val when i % 3 == 2, so 3 rows bring the first val task and 1 the first train task)."""
-    has_train, has_val = bool(suite.split("train")), bool(suite.split("val"))
-    if has_val:
-        return 1
-    return 3 if has_train else FIRST_ROUND
+    """Pending rows the first round of `suite` waits for: one fills the missing split of a suite
+    that has train or val tasks (splits.assign keeps both), FIRST_ROUND an empty one."""
+    return 1 if suite.split("train") or suite.split("val") else FIRST_ROUND
 
 
 def rows_needed(suite: Suite, settings: dict[str, Any] | None) -> int:
@@ -193,7 +194,7 @@ def rows_needed(suite: Suite, settings: dict[str, Any] | None) -> int:
 
 
 def merge_pending(suite_root: Path, tasks_path: Path) -> int:
-    """Move pending feedback into the tasks file (2 of 3 to train, 1 to val); return the count."""
+    """Move pending feedback into the tasks file (splits chosen by splits.assign); return the count."""
     root = Path(suite_root)
     with locked(root / QUEUE_LOCK):  # `feedback` waits meanwhile, so no row is lost
         rows = _queue(root)
@@ -204,8 +205,9 @@ def merge_pending(suite_root: Path, tasks_path: Path) -> int:
         new = [r for r in rows if r["id"].lower() not in known]  # a crash may have merged some already
         if new:
             backup_once(tasks_path)
-            lines += [json.dumps({**row, "split": "val" if i % 3 == 2 else "train"}, ensure_ascii=False)
-                      for i, row in enumerate(new)]
+            existing = [json.loads(line) for line in lines]
+            lines += [json.dumps({**row, "split": split}, ensure_ascii=False)
+                      for row, split in zip(new, assign(existing, new))]
             write_text(tasks_path, "\n".join(lines) + "\n")
         history = root / MERGED
         logged = {r["id"] for r in _rows(read_text(history))} if history.is_file() else set()

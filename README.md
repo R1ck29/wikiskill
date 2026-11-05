@@ -25,7 +25,8 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 ```
 
 タスクは 3 つに分けて使います。**train**（学習用。①で解く）、**val**（検証用。④の採否判定）、
-**test**（最終評価用。育成中は一切使わない）。
+**test**（最終評価用。育成中は一切使わない）。分け方は WikiSkill が自動で決めるので、例を書くときに考える必要はありません
+（train と val を 2:1、「良い」「違う」の評価はそれぞれ 2:1。40 件目から 5 件に 1 件を test に取り分け。詳しくは [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) の「タスクの自動振り分け」）。
 
 育ったスキルを使い始めたあとも、利用者が結果に「良い」「違う、正しくは…」と言うだけで記録され（`feedback`）、
 3 件たまると裏で自動的に育て直します（`improve`。点が上がったときだけ採用し、書き出したスキルも更新）。
@@ -129,6 +130,7 @@ python -m wikiskill export workspaces/sales --dest ~/.claude/skills
 でタスクの無いスイートを作り、`suite.json`（業務の説明と採点基準）だけを直します。あとは `feedback` で記録した結果が train / val になり、
 6 件（train 4・val 2）たまった時点で最初の `improve` が自動で始まります。val が少ないうちは採否が偶然に左右されやすいので
 （論文の val は 10〜40 件）、育成が進むほど記録が val にも 3 件に 1 件ずつ加わって安定していきます。
+test は 40 件目まで作らないので、それまでは `evaluate`（既定 `--split test`）に `--split val` を付けて比べます。
 依頼文と添付ファイルだけで解き直せる業務に限られます（[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) の「例が無い業務の始め方」）。
 
 ### 正解を人が決める（2 つのモード）

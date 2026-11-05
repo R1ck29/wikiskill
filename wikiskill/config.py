@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .splits import fill_missing
 from .util import is_windows_reserved, read_json, read_text
 
 SPLITS = ("train", "val", "test")
@@ -59,6 +60,7 @@ def load_suite(
     collecting reference answers with the `review` command (`require_answers=False`).
     `human_review` overrides the suite's own setting (CLI --human-review on/off).
     `allow_empty` accepts a tasks file without tasks: a suite that learns only from feedback starts so.
+    Tasks without a `split` get one here and keep it (splits.fill_missing).
     """
     path = Path(path)
     suite_file = path / "suite.json" if path.is_dir() else path
@@ -76,6 +78,11 @@ def load_suite(
         if not isinstance(human_review, bool):
             raise ConfigError("suite.json: 'human_review' must be true or false")
     check_answers = require_answers and not human_review
+    try:
+        fill_missing(tasks_path, root)
+    except OSError as e:
+        raise ConfigError(f"cannot write the automatic splits to {tasks_path} ({e}); "
+                          "make the folder writable or write 'split' on every task") from e
     tasks = load_tasks(tasks_path, files_dir, scorer["type"] if check_answers else None, allow_empty)
     return Suite(
         name=_require_str(cfg, "name"),
