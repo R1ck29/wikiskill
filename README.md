@@ -9,7 +9,7 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 
 - **Python 3.9 以上の標準ライブラリだけ**で動きます（`pip install` 不要）。Windows / macOS / Linux 対応。
 - モデルは手元の **`claude`（または `codex`）コマンド経由でのみ**呼びます。WikiSkill 自身はネットワークに接続しないので、
-  CLI が API キー・Bedrock・社内ゲートウェイのどれで認証していても、そのまま使えます。
+  CLI が API キー・Bedrock・LLM ゲートウェイのどれで認証していても、そのまま使えます。
 - 育ったスキルは Claude Code や Codex のスキルとしてそのまま使えます。
 
 ## しくみ
@@ -46,7 +46,7 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 記録するかどうかは Claude が判断し、要らなければ `--no-hook` を付けて組み込み直すと外れます（詳細は [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 4 章）。
 消費するトークンの目安（文字数からの推定）は、常に 1 セッションあたり約 200（スキルの説明文）、呼び出したときだけ約 3,500（手順書）、フックの注意が付いた発言で約 150 です。
 
-**A. ZIP から自分のグローバル設定に入れる（社内での標準）**: GitHub の「Code → Download ZIP」で取得して展開し、
+**A. ZIP から自分のグローバル設定に入れる（通常はこちら）**: GitHub の「Code → Download ZIP」で取得して展開し、
 [INSTALL_PROMPT.md](INSTALL_PROMPT.md) の文章を Claude Code に貼り付けて送ります。Claude が [CLAUDE.md](CLAUDE.md) の手順に従って
 `~/.claude/skills/wikiskill` に入れ、動作を確かめます。特定のプラグインやプロジェクトに入れたい場合の文章も同じファイルにあります。
 手で行う場合は、展開したフォルダで次を実行します（`python` は macOS / Linux では `python3`、Windows では `py`）。
@@ -59,6 +59,9 @@ python tools/integrate.py ~/.claude/skills --skills-dir --force
 `/plugin install wikiskill --marketplace R1ck29/wikiskill` と入力します（`/wikiskill:wikiskill` で呼び出せます）。
 A と B を両方入れると同じスキルが 2 つ並ぶので、どちらか一方にしてください。B で入るフックは `python3` で起動するので、
 `python3` が無い Windows では A を使ってください。
+
+入れた後は、認証・ツールの許可・フック・自動の改善が導入先の環境で動くかを
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) の 5 章「導入先で確かめること」の順で確かめてください。
 
 ## 費用と API キー
 
@@ -93,7 +96,7 @@ python -m wikiskill check --model sonnet
 python -m wikiskill evolve examples/sales-analysis --workspace workspaces/sales --model haiku --iterations 4
 ```
 
-売上 CSV の集計タスクでスキルを育てます。答えは「金額は税抜で報告する」という**データに書かれていない社内ルール**に
+売上 CSV の集計タスクでスキルを育てます。答えは「金額は税抜で報告する」という**データに書かれていない業務ルール**に
 従っているため、エージェントは失敗から学ぶ必要があります。止めても同じコマンドで続きから再開します。
 
 ```bash
@@ -221,5 +224,5 @@ python -m unittest discover -s tests -t .
 
 - [INSTALL_PROMPT.md](INSTALL_PROMPT.md) / [CLAUDE.md](CLAUDE.md) — Claude に入れてもらうときの文章と、Claude が従う手順
 - [docs/SUITE_FORMAT.md](docs/SUITE_FORMAT.md) — 自分の業務のタスクと採点方法の書き方
-- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — CLI の設定、社内環境での注意点
+- [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — CLI の設定、導入先の環境での注意点と確かめること
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 仕組み、自動改善の動き、コード構成、論文との対応と差分

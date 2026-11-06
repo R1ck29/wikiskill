@@ -1,7 +1,7 @@
 # CLI の設定
 
 WikiSkill はモデルを直接呼ばず、`claude`（Claude Code）または `codex`（Codex CLI）コマンドを実行します。
-そのため **CLI が単体で動く状態なら、認証方式（API キー、Bedrock、社内ゲートウェイなど）を問わず使えます。**
+そのため **CLI が単体で動く状態なら、認証方式（API キー、Bedrock、LLM ゲートウェイなど）を問わず使えます。**
 
 ## 1. 動作確認
 
@@ -64,7 +64,7 @@ WikiSkill が行う呼び出しは 2 種類です。
 
 JSON ファイルを作り、`--backend-config` で指定します。書いたキーだけが既定値を上書きします。
 `complete_args` / `agent_args` は**丸ごと置き換え**なので、残したい既定の引数も書いてください。
-次の例は、社内ポリシーで `bypassPermissions` が使えない場合に、許可するツールを限定する設定です。
+次の例は、組織のポリシーで `bypassPermissions` が使えない場合に、許可するツールを限定する設定です。
 
 ```json
 {
@@ -92,13 +92,12 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
 | `retries` | 2 | CLI が失敗したときの再試行回数 |
 | `retry_wait` | 10 | 再試行までの待ち秒数（n 回目は n 倍） |
 
-## 4. 社内環境での注意
+## 4. 導入先の環境での注意
 
-- **認証**: WikiSkill は認証情報を扱わず、CLI がいつもどおり認証します（`--safe-mode` でも認証は通常どおり。
-  開発中に実際のモデル呼び出しで確かめたのはサブスクリプションのログインだけなので、API キーの環境では最初に `check` を実行して確かめてください）。API キーなら
-  `ANTHROPIC_API_KEY`（または Claude Code 設定の `apiKeyHelper`）、Bedrock・Vertex・社内ゲートウェイならその環境変数を、
+- **認証**: WikiSkill は認証情報を扱わず、CLI がいつもどおり認証します（`--safe-mode` でも認証は通常どおり）。API キーなら
+  `ANTHROPIC_API_KEY`（または Claude Code 設定の `apiKeyHelper`）、Bedrock・Vertex・LLM ゲートウェイならその環境変数を、
   `claude` を実行する環境で設定してください。`feedback` が裏で起動する自動の改善は、記録した Claude Code のセッションの環境変数を引き継ぎます。
-- **自動の改善のモデル**: claude では別名 `sonnet` を渡します。Bedrock や社内ゲートウェイでも CLI がその環境の Sonnet に解決しますが、
+- **自動の改善のモデル**: claude では別名 `sonnet` を渡します。Bedrock や LLM ゲートウェイでも CLI がその環境の Sonnet に解決しますが、
   別名が使えない環境では `ANTHROPIC_DEFAULT_SONNET_MODEL` でその環境のモデル名を指定してください。
 - **管理者の設定（managed settings）**: `--safe-mode` でも管理者の設定は効きます。`bypassPermissions` が禁止されていると
   エージェント実行が失敗するので、3 章の例のように `acceptEdits` と許可するツールを指定してください（`check` で確かめられます）。
@@ -110,12 +109,10 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
   その Python を消したり入れ替えたりしたら、組み込みをやり直してください。管理者の設定の `allowManagedHooksOnly` や `disableAllHooks` で
   フックが止められている環境では、評価にはスキルの説明文だけで気づくことになります（組み込み時に警告が出ます）。
   手で入れる場合は、`hooks.UserPromptSubmit` に `"<python>" "<スキル>/scripts/judgement_hook.py"` を実行する command フックを足します。
-  実際の Claude Code で動きを確かめたのは macOS だけです。Windows（Git Bash）や管理者の設定がある環境では、組み込みの後に
-  新しい会話で何か結果を出してもらい、「違う」と返して、Claude が記録するか（初回は「覚えますか？」と聞くか）を確かめてください。
 - **ネットワークドライブ**: スイートとワークスペースはローカルのドライブに置いてください。ファイルロックが使えないドライブでは
   `cannot lock ... keep WikiSkill folders on a local drive` と表示して止まります。
 - **WikiSkill 自身の通信**: ありません（ネットワーク系モジュールを使っていないことを `tests/test_no_network.py` で確認しています）。
-  通信は CLI からモデルへの呼び出しだけです。エージェントがシェル経由で外部に接続できるかどうかは、CLI と社内ネットワークの設定によります。
+  通信は CLI からモデルへの呼び出しだけです。エージェントがシェル経由で外部に接続できるかどうかは、CLI とネットワークの設定によります。
 - **`--safe-mode` が使えない CLI**: 古い claude では `unknown option` になります。`complete_args` / `agent_args` から外してください。
 - **Windows での自動の改善**: 隠れたコンソールで動くため、ウィンドウは開きません。止めたいときはタスクマネージャーで
   `python` を終了するか、スイートの `improve.json` を消して次から起動しないようにします。
@@ -125,3 +122,19 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
   （障害を「不正解」として wiki や採否判定に混ぜないため）。同じコマンドを再実行すると、失敗したタスクだけをやり直します。
 - **データの保存先**: 実行記録・作業フォルダのコピー・レビューシートは、`evolve` ではワークスペース、`evaluate` と `review` では
   `--out` のフォルダに保存されます。業務データを含むため、共有フォルダや Git に置かないでください。
+
+## 5. 導入先で確かめること
+
+開発中に実際のモデル呼び出しと Claude Code で動きを確かめたのは、macOS とサブスクリプションのログインだけです。
+API キー・Bedrock・LLM ゲートウェイでの認証、Windows（Git Bash）、管理者の設定がある環境での動きは、導入先でしか確かめられません。
+組み込んだ後に、次の順で確かめてください。
+
+1. **CLI**: `claude -p "hello"` が単体で返答する。返答しなければ CLI の認証から直す（4 章「認証」）。
+2. **認証とツールの許可**: スキルフォルダの `scripts/run_wikiskill.py check` を実行し（モデルを 2 回だけ呼ぶ）、
+   `run_agent(): ok=True` まで出る。出なければ 1 章の表に従って直す。
+3. **フック**: 組み込みの表示に `hook: UserPromptSubmit added to ...` が出ている。新しい会話で集計や翻訳など何か結果を出してもらい、
+   「違う」と返して、Claude が記録する（初めての業務なら「覚えますか？」と聞く）。聞かなければ、組み込みの `warning:` の内容と、
+   フックの実行に PowerShell を指定していないかを確かめる（4 章「評価を知らせるフック」）。
+4. **自動の改善**: 評価がたまって自動の改善が初めて動いたら、`budget` で費用が数えられていること、`<ワークスペース>/background.log` に
+   モデルのエラーが無いことを見る。別名 `sonnet` が使えないエラーなら `ANTHROPIC_DEFAULT_SONNET_MODEL` を設定する（4 章「自動の改善のモデル」）。
+5. **置き場所**: ホームフォルダがネットワークドライブで `cannot lock` と出たら、作業フォルダをローカルのドライブに移す（4 章「ネットワークドライブ」）。

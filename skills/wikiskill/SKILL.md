@@ -17,7 +17,7 @@ allowed-tools: Bash(python3 "${CLAUDE_SKILL_DIR}/scripts/run_wikiskill.py" *) Ba
 Windows は `python3` を `py`、無ければ `python` に）。
 `WS` は単独で実行し、`;` `&&` `echo` などを付け足さない（終了コードは結果に表示される。付け足すと許可の確認が出る）。
 
-- 最初に `WS check --no-call`。`claude`（または `codex`）が `NOT FOUND` なら、社内の手順で CLI を入れるよう伝えて止まる。
+- 最初に `WS check --no-call`。`claude`（または `codex`）が `NOT FOUND` なら、その環境の手順で CLI を入れるよう伝えて止まる。
 - 処理はコマンドに任せる。`raw/` `runs/` `wiki/` や実行記録は読まない。エラー時だけ `run.log` の末尾 30 行を読む。
 - `improve` は Bash の `run_in_background` で実行し、完了通知を待つ（sleep・ポーリングしない）。
 - 利用者の例ファイルは件数と形式がわかる分だけ見る。
@@ -61,7 +61,7 @@ Windows は `python3` を `py`、無ければ `python` に）。
 `[wikiskill]` で始まる注意が付いていたら、評価や直しらしい言葉をフックが見つけた印（そうでなければ無視する）。
 
 1. **対象か判断する**: 依頼文と添付ファイルだけから同じ結果を作れる、繰り返しの業務（集計・翻訳・文書作成・定型の回答など）だけが対象。
-   リポジトリのコードの変更、Web・社内システム・MCP に頼った作業、一度きりの質問は対象外で、何もせず何も言わない
+   リポジトリのコードの変更、Web・業務システム・MCP に頼った作業、一度きりの質問は対象外で、何もせず何も言わない
    （育成では依頼文と添付ファイルだけを空のフォルダに置いて解き直すため、それ以外に頼る作業は学べない）。
 2. **業務を選ぶ**: 育ったスキル（末尾に「Feedback for automatic improvement」がある）を使った結果なら、そこに書かれたスイートが `S`。
    それ以外は `WS list` で一覧を見て、入力の種類・出力の形・良し悪しの基準が同じ業務があればその `S` を使う。違う種類を混ぜない。
@@ -108,4 +108,4 @@ NG の行は `corrected_answer` に正しい答えを、`answer_key` 列は触�
 ## 参照（迷ったときだけ読む）
 
 `docs/` と `examples/` は `${CLAUDE_SKILL_DIR}` の中、無ければ `${CLAUDE_SKILL_DIR}/../..` にあります。
-書式と採点方法は `docs/SUITE_FORMAT.md`、社内ゲートウェイなど CLI の設定は `docs/CONFIGURATION.md`。
+書式と採点方法は `docs/SUITE_FORMAT.md`、LLM ゲートウェイなど CLI の設定は `docs/CONFIGURATION.md`。

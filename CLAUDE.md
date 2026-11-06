@@ -42,12 +42,8 @@ WikiSkill は、業務の例からエージェント用スキル（SKILL.md）�
 Python が実行できない環境では、`skills/wikiskill/` を入れ先にコピーし、その中へ `wikiskill/`・`docs/`・`examples/` の
 3 フォルダもコピーすれば同じ形になります。
 
-社内環境で確かめておくこと（詳細は [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 4 章）:
-
-- `claude -p "hello"` が単体で返答すれば、API キー・Bedrock・社内ゲートウェイのどの認証でもそのまま動く。
-  API キーでは実際の料金がかかる（目安と上限は README の「費用と API キー」）。
-- 管理者の設定（managed settings）で `bypassPermissions` が禁止されているとエージェント実行が失敗するので、
-  設定ファイルで許可するツールを限定する（CONFIGURATION.md 3 章の例）。
+組み込んだ後は、導入先でしか確かめられないこと（認証・ツールの許可・フック・自動の改善）を
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md) 5 章の順で利用者と確かめる。API キーでは実際の料金がかかる（目安と上限は README の「費用と API キー」）。
 
 ## このリポジトリを開発するとき
 
