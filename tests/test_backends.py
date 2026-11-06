@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import stat
@@ -155,7 +156,16 @@ class FailureTest(FakeCLITestCase):
         (root / "files").mkdir()
         suite = Suite("s", root, "d", "{skill_section}", {"type": "exact"}, 1.0, False, root / "t", root / "files", ())
         tasks = [Task(f"t{i}", "train", "q", answer="1") for i in range(3)]
-        threading.Timer(2.0, _thread.interrupt_main).start()  # what a terminal Ctrl+C does
+        def ctrl_c_once_all_started():  # what a terminal Ctrl+C does; a fixed delay was too short on slow runners
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                with contextlib.suppress(OSError, ValueError):  # the record may not exist yet or be mid-write
+                    if len(self.calls()) >= 3:
+                        break
+                time.sleep(0.1)
+            _thread.interrupt_main()
+
+        threading.Thread(target=ctrl_c_once_all_started, daemon=True).start()
         started = time.monotonic()
         with mock.patch.dict(os.environ, {"FAKE_CLI_HANG": "1"}), self.assertRaises(KeyboardInterrupt):
             run_tasks(backend, suite, tasks, [], root / "stage", workers=3)
