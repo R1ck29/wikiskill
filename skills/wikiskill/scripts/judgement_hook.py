@@ -34,11 +34,19 @@ JUDGEMENT = re.compile("|".join([
 BRIEF = re.compile("|".join([
     r"ありがとう|ダメ(?!ージ)|だめ|足りない|直して|修正して",
     _EN.format(r"great|nice|thanks|thank you|should be|mistake|try again|redo|bad"),
+    # corrections given as an instruction about the last result, without saying it was wrong
+    # ("いや、税込で", "千円単位で切り捨てて", "そこは敬語で", "Make it shorter", "No, use thousands")
+    # Only phrasings that point at the last result: generic words ("もっと詳しく説明して", "Make it work") are left out.
+    r"^(?:いや|いえ|ううん)[、,\s]|(?:もっと|もう少し)(?:短|長|簡潔|丁寧|やさし|わかりやす|分かりやす|細か|大まか)"
+    r"|単位で|単位に|抜けて|漏れて|多すぎ|少なすぎ|長すぎ|短すぎ|になってない|になっていない|入ってない|入っていない",
+    r"^no[,、.]",
+    _EN.format(r"instead[.!]?$|rather than|make it (?:shorter|longer|simpler|clearer|more|less|formal|polite)"
+               r"|too (?:long|short|many|few)|needs to be|in thousands|shorter|longer"),
 ]), re.IGNORECASE)
 SHORT = re.compile(r"^(?:ok(?:ay)?|オーケー|オッケー|おけ|よし|nope|yep|no)[\s!！.。、,]*$", re.IGNORECASE)
 NOTE = (
-    "[wikiskill] この発言は直前の結果への評価（良い／違う）かもしれません。"
-    "評価であり、その結果が依頼文と添付ファイルだけで解き直せる繰り返しの業務なら、"
+    "[wikiskill] この発言は直前の結果への評価（良い／違う）か、結果の直しの指示かもしれません。"
+    "評価または直しの指示であり、その結果が依頼文と添付ファイルだけで解き直せる繰り返しの業務なら、"
     "wikiskill スキルの「B. 利用者の評価を記録する」に従って記録してください。"
     "そうでなければこの注意は無視し、利用者にも触れないでください。"
 )

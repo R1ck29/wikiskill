@@ -30,16 +30,21 @@ class HookScriptTest(unittest.TestCase):
                "should have been 1234", "it's actually 1234", "a mistake in row 2", "try again", "redo it",
                "bad", "off by one", "ng", "ｇｏｏｄ")
     MIXED = ("これはwrongです", "greatです", "goodです", "NGでした", "千円単位にしてshould be 1234")
+    CORRECTIONS = ("千円単位で切り捨てて", "もっと短くして", "もう少し丁寧に", "いや、税込で", "合計が入ってない", "長すぎる",
+                   "Make it shorter", "Shorter please", "No, use thousands of yen", "use bullets instead")
+    NEW_REQUESTS = ("もっと詳しく説明して", "ここは何をしているの？", "そこはどういう意味？", "JSONではなくYAMLで出力して",
+                    "Make it work with Python 3.9", "Change it to use async", "What is missing in this config?",
+                    "No problem, continue", "Actually can you also add tests", "Translate to English instead of Japanese")
 
     def test_judgements_in_japanese_english_or_both_get_the_reminder(self):
-        for prompt in self.JAPANESE + self.ENGLISH + self.MIXED:
+        for prompt in self.JAPANESE + self.ENGLISH + self.MIXED + self.CORRECTIONS:
             self.assertEqual(judgement_hook.note_for(prompt), judgement_hook.NOTE, prompt)
 
     def test_other_prompts_get_nothing(self):
         for prompt in ("", "売上を集計して", "次の英文を訳して: Please submit the report.", "/wikiskill",
                        "ok, do it now and then summarise the sales figures by region",
                        "good" + "x" * 3000, "goodness", "badge", "ping the server", "ダメージを集計して",
-                       "Summarise this file", "Translate the attached memo into Japanese"):
+                       "Summarise this file", "Translate the attached memo into Japanese", *self.NEW_REQUESTS):
             self.assertIsNone(judgement_hook.note_for(prompt), prompt[:30])
 
     def test_words_that_requests_use_too_count_only_in_a_short_prompt(self):

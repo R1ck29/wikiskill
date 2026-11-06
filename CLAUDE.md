@@ -35,7 +35,7 @@ WikiSkill は、業務の例からエージェント用スキル（SKILL.md）�
    `NOT FOUND` なら、CLI のインストールか [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 3 章の `command` 設定が必要と伝える。
 4. 同じ名前の WikiSkill がプラグインとしても入っていると（`claude plugin list` に `wikiskill` がある）2 つ並んで紛らわしいので、
    利用者に確認してから `claude plugin disable wikiskill@wikiskill` で止める。
-5. 利用者には「新しい会話で『この業務を覚えさせて』と話しかけるか、繰り返しの作業の結果に『良い』『違う、正しくは…』と言えば使える（`/wikiskill` でも呼べる。プラグインに入れたなら
+5. 利用者には「新しい会話で『この業務を覚えさせて』と話しかけるか、繰り返しの作業の結果に『良い』『違う、正しくは…』と言うか『千円単位で』のように直しを指示すれば使える（`/wikiskill` でも呼べる。プラグインに入れたなら
    `/<プラグイン名>:wikiskill`）」と伝える。プラグインやプロジェクトが Git 管理なら、追加されたフォルダをそのままコミットしてよい
    （`__pycache__` は含まれず、業務データや育成記録はこの中ではなく `~/wikiskill-work/` に作られる）。
 
