@@ -19,14 +19,28 @@ def call_hook(command, prompt):
 
 
 class HookScriptTest(unittest.TestCase):
-    def test_judgements_get_the_reminder(self):
-        for prompt in ("良い", "違う、正しくは 1234", "それじゃなくて千円単位で", "間違ってる", "完璧！",
-                       "Wrong, it should be 1234", "perfect", "これはwrongです", "greatです"):
+    JAPANESE = ("良い", "よかった", "いいね", "いい感じです", "完璧！", "その通り", "合ってます", "正解", "素晴らしい",
+                "助かります", "ありがとう", "これでOK", "問題ないです", "OK", "ＯＫ！", "オッケー", "よし",
+                "違う、正しくは 1234", "違います", "ちょっと違って千円単位", "それじゃなくて千円単位で", "間違ってる",
+                "誤りがあります", "そうじゃない", "ダメ", "やり直して", "おかしい", "惜しい", "桁がずれてる",
+                "千円単位に直して", "NG", "これはNGです")
+    ENGLISH = ("good", "Looks good!", "great", "Perfect.", "correct", "nice", "excellent", "exactly", "LGTM",
+               "well done", "that's right", "spot on", "thanks", "thank you!", "ok", "Okay.", "yep", "nope", "no",
+               "Wrong, it should be 1234", "incorrect", "not quite", "not what I wanted", "that's not it",
+               "should have been 1234", "it's actually 1234", "a mistake in row 2", "try again", "redo it",
+               "bad", "off by one", "ng", "ｇｏｏｄ")
+    MIXED = ("これはwrongです", "greatです", "goodです", "NGでした", "千円単位にしてshould be 1234")
+
+    def test_judgements_in_japanese_english_or_both_get_the_reminder(self):
+        for prompt in self.JAPANESE + self.ENGLISH + self.MIXED:
             self.assertEqual(judgement_hook.note_for(prompt), judgement_hook.NOTE, prompt)
 
     def test_other_prompts_get_nothing(self):
-        for prompt in ("", "売上を集計して", "/wikiskill", "ok, do it", "good" + "x" * 3000, "goodness", "ダメージを集計して"):
-            self.assertIsNone(judgement_hook.note_for(prompt), prompt[:20])
+        for prompt in ("", "売上を集計して", "次の英文を訳して: Please submit the report.", "/wikiskill",
+                       "ok, do it now and then summarise the sales figures by region",
+                       "good" + "x" * 3000, "goodness", "badge", "ping the server", "ダメージを集計して",
+                       "Summarise this file", "Translate the attached memo into Japanese"):
+            self.assertIsNone(judgement_hook.note_for(prompt), prompt[:30])
 
     def test_the_script_prints_the_context_or_nothing_and_never_fails(self):
         cmd = f'"{sys.executable}" "{HOOK}"'
