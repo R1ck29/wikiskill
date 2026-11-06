@@ -1,7 +1,7 @@
 """Learning from real usage: queue feedback on real results, then keep evolving the same workspace.
 
 `feedback` appends one judged real-world result to `<suite>/feedback.jsonl` (the pending queue).
-`improve` moves pending rows into the train/val tasks once the current round is finished
+`improve` moves pending rows into the tasks (splits.assign picks train/val, and test from the 40th task) once the current round is finished
 (`merge_ready`), and the changed task set starts a new round in the same workspace
 (EvolveOptions.adopt_new_tasks), so skills, wiki and history carry on.
 

@@ -43,6 +43,8 @@ class AssignTest(unittest.TestCase):
         existing = [{"id": "e", "split": "train"}]
         self.assertEqual(assign(existing, rows(1, "good")), ["val"])
         self.assertEqual(assign([{"id": "e", "split": "val"}], rows(1)), ["train"])
+        only_val = [{"id": f"e{i}", "split": "val"} for i in range(TEST_FROM - 1)]
+        self.assertEqual(assign(only_val, rows(1)), ["train"])  # the 40th task would go to test, but a round needs train
 
     def test_the_result_does_not_depend_on_the_written_order(self):
         new = rows(9)

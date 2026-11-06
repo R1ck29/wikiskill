@@ -26,7 +26,7 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 
 タスクは 3 つに分けて使います。**train**（学習用。①で解く）、**val**（検証用。④の採否判定）、
 **test**（最終評価用。育成中は一切使わない）。分け方は WikiSkill が自動で決めるので、例を書くときに考える必要はありません
-（train と val を 2:1、「良い」「違う」の評価はそれぞれ 2:1。40 件目から 5 件に 1 件を test に取り分け。詳しくは [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) の「タスクの自動振り分け」）。
+（決め方は [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) の「タスクの自動振り分け」）。
 
 育ったスキルを使い始めたあとも、利用者が結果に「良い」「違う、正しくは…」と言うだけで記録され（`feedback`）、
 3 件たまると裏で自動的に育て直します（`improve`。点が上がったときだけ採用し、書き出したスキルも更新）。
@@ -40,12 +40,10 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 入れたあとは Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、Claude が下のコマンドを代わりに実行します。
 利用者の作業は**例のフォルダを伝えるか、普段の作業結果を「良い」「違う」と評価することだけ**で、正解が無い業務は Claude が採点基準を書いて自動採点し、
 育ったスキルは `~/.claude/skills` に書き出されて全プロジェクトで使えるようになります。
-常に消費するのは 1 セッションあたり約 50 トークン（スキルの説明文）で、呼び出したときだけ約 850 トークン（手順書）が加わります。
-
-**評価の見落としを防ぐフック**: 組み込むと、Claude Code の設定に `UserPromptSubmit` フックも登録されます。「良い」「いいね」「違う」
-「正しくは」「looks good」「wrong, it should be…」のような日本語・英語（混ぜても可、全角も可）の評価らしい発言のときだけ、Claude に「評価なら記録して」という短い注意（約 150 トークン）を渡します。
-スキルの説明文だけでは「いいね」の一言を見落とすことがありますが、フックがあれば拾えます。記録するかどうかは、今までどおり Claude が判断します。
-入れたくない場合は `--no-hook` を付けて組み込み直します（すでに入っているフックも外れます）。管理者の設定でフックが禁止されていると、組み込み時に警告が出ます。
+組み込むと、評価の見落としを防ぐフックも Claude Code の設定に登録されます。「良い」「いいね」「違う、正しくは…」「looks good」のような
+評価らしい言葉を含む発言（お礼や修正の依頼でも付くことがあります）にだけ、「評価なら記録して」という短い注意を Claude に渡します。
+記録するかどうかは Claude が判断し、要らなければ `--no-hook` を付けて組み込み直すと外れます（詳細は [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 4 章）。
+消費するトークンの目安は、常に 1 セッションあたり約 200（スキルの説明文）、呼び出したときだけ約 3,500（手順書）、フックの注意が付いた発言で約 150 です。
 
 **A. ZIP から自分のグローバル設定に入れる（社内での標準）**: GitHub の「Code → Download ZIP」で取得して展開し、
 [INSTALL_PROMPT.md](INSTALL_PROMPT.md) の文章を Claude Code に貼り付けて送ります。Claude が [CLAUDE.md](CLAUDE.md) の手順に従って
@@ -134,10 +132,9 @@ python -m wikiskill export workspaces/sales --dest ~/.claude/skills
 
 例が無い業務は、`python -m wikiskill init <新しいフォルダ> --like translation-ja-en --workspace <ワークスペース> --export ~/.claude/skills`
 でタスクの無いスイートを作り、`suite.json`（業務の説明と採点基準）だけを直します。あとは `feedback` で記録した結果が train / val になり、
-6 件（train 4・val 2）たまった時点で最初の `improve` が自動で始まります。val が少ないうちは採否が偶然に左右されやすいので
-（論文の val は 10〜40 件）、育成が進むほど記録が val にも 3 件に 1 件ずつ加わって安定していきます。
-test は 40 件目まで作らないので、それまでは `evaluate`（既定 `--split test`）に `--split val` を付けて比べます。
-依頼文と添付ファイルだけで解き直せる業務に限られます（[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) の「例が無い業務の始め方」）。
+6 件たまった時点で最初の `improve` が自動で始まります。依頼文と添付ファイルだけで解き直せる業務に限られ、
+最初のうちは採否が偶然に左右されやすいなどの限界があります（[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) の「例が無い業務の始め方」）。
+test はタスクが 40 件になるまで作られないので、それまでスキルあり／なしを比べるときは `evaluate` に `--split val` を付けます。
 
 ### 正解を人が決める（2 つのモード）
 
@@ -154,7 +151,8 @@ python -m wikiskill review my-suite --out review
 python -m wikiskill review-apply my-suite review/review_sheet.csv
 ```
 
-tasks.jsonl に正解と採点基準が書き込まれます（最初の元ファイルは `tasks.jsonl.bak` に残ります）。
+tasks.jsonl に正解と採点基準が書き込まれます（`tasks.jsonl.bak` には、WikiSkill が最初に書き換える前の版が残ります。
+split の自動の書き足しも書き換えに入るので、その場合はそれより前の版です）。
 
 **毎回人が判定**: `suite.json` に `"human_review": true` を書くか、`evolve` / `improve` / `evaluate` に `--human-review on` を付けます。
 採点が必要になるたびにレビューシート（`evolve` / `improve` は `<ワークスペース>/reviews/*.csv`、`evaluate` は `<--out>/review.csv`）が作られて
@@ -171,13 +169,13 @@ tasks.jsonl に正解と採点基準が書き込まれます（最初の元フ�
 | `init SUITE --like 例 --inputs DIR` | 付属の例（`sales-analysis` / `translation-ja-en`）からスイートを作り、入力ファイルをコピー。`--workspace DIR`（と `--export DEST`）を付けると、タスクを書かずに `feedback` の記録だけで育て始める設定を保存 |
 | `list` | `~/wikiskill-work`（`--root DIR` で変更）にあるスイートの業務名・説明・タスク数・未取り込みの記録・自動の改善の有無を表示 |
 | `evolve SUITE --workspace DIR` | スキルを育てる。再実行で再開、`--iterations`（既定 8）を増やせば延長 |
-| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開し、`feedback` の記録が `--min-new`（既定 3）件以上（初回はすべて。タスクの無いスイートの初回は 6 件以上）あればタスクに加えて `--iterations`（既定 3）回続け、なければ書き出しだけ行う。`--daily-budget USD` で 1 日の費用に上限、`--wait` で実行中の処理の終了を待つ |
+| `improve SUITE --workspace DIR --export DEST` | 同じワークスペースで育て続ける。途中なら再開し、`feedback` の記録が `--min-new`（既定 3）件以上（まだ育てていないスイートでは何件でも。ただしタスクが 1 件も無いスイートは 6 件から）あればタスクに加えて `--iterations`（既定 3）回続け、なければ書き出しだけ行う。`--daily-budget USD` で 1 日の費用に上限、`--wait` で実行中の処理の終了を待つ |
 | `feedback SUITE --verdict good\|bad --prompt 依頼` | 実際の利用結果を記録（`--output` 出した結果（good では必須）、`--correct` 正解、`--note` 理由、`--file` 入力ファイル）。記録がたまると `improve` を裏で起動し、`started` / `paused`（今日の上限に到達）/ `ready`（手動の `improve` が必要）と表示。前回の自動の改善が失敗していれば `warning` で原因を表示 |
 | `evaluate SUITE --out DIR` と `--workspace DIR` / `--skills DIR` / `--no-skills` のどれか | 指定したスキルで採点し `report.json` を出力（`--split` 既定 test） |
 | `compare A.json B.json` | 2 つの評価結果の差を検定 |
 | `review` / `review-apply` | ハイブリッド方式のレビュー |
 | `status DIR` | 反復ごとの採否と検証スコアを表示 |
-| `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し（`--suite SUITE` で、結果の評価をそのスイートに記録する案内も付ける） |
+| `export DIR --dest DIR` | スキルを Claude Code / Codex のスキルフォルダへ書き出し（`--suite SUITE` で、結果の評価をそのスイートに記録する案内も付ける。同名のスキルがあれば `--force` で上書き） |
 
 モデルを使うコマンド（`check`・`evolve`・`improve`・`evaluate`・`review`）では `--backend claude|codex`、`--model`、
 `--judge-model`（llm_judge の採点モデル）、`--backend-config`（CLI の引数を変える。[docs/CONFIGURATION.md](docs/CONFIGURATION.md)）が使えます。

@@ -29,7 +29,8 @@ WikiSkill は、業務の例からエージェント用スキル（SKILL.md）�
    ```
 
 3. 表示された入れ先が意図どおり（グローバルなら利用者のホームフォルダの `.claude/skills/wikiskill`）か確かめ、
-   `hook: UserPromptSubmit added to ...` が出たことも確かめる（`warning:` が出たら、その内容と「評価はスキルの説明文だけで拾うことになる」と伝える）。
+   フックの行も確かめる。`hook: UserPromptSubmit added to ...` なら成功。`hook: not added`（設定ファイルの無いスキルフォルダ）や
+   `warning:`（終了コード 1。スキル自体は入っている）なら、その内容と「評価はスキルの説明文だけで拾うことになる」と伝える。
    続けて表示された `check --no-call` を実行し、`claude` コマンドが `NOT FOUND` でないことを確かめる（モデルは呼ばない）。
    `NOT FOUND` なら、CLI のインストールか [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 3 章の `command` 設定が必要と伝える。
 4. 同じ名前の WikiSkill がプラグインとしても入っていると（`claude plugin list` に `wikiskill` がある）2 つ並んで紛らわしいので、
@@ -44,7 +45,7 @@ Python が実行できない環境では、`skills/wikiskill/` を入れ先に�
 社内環境で確かめておくこと（詳細は [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 4 章）:
 
 - `claude -p "hello"` が単体で返答すれば、API キー・Bedrock・社内ゲートウェイのどの認証でもそのまま動く。
-  API キーでは実際の料金がかかる（目安と上限は README の「費用」）。
+  API キーでは実際の料金がかかる（目安と上限は README の「費用と API キー」）。
 - 管理者の設定（managed settings）で `bypassPermissions` が禁止されているとエージェント実行が失敗するので、
   設定ファイルで許可するツールを限定する（CONFIGURATION.md 3 章の例）。
 

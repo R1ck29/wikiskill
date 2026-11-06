@@ -42,6 +42,14 @@ class HookScriptTest(unittest.TestCase):
                        "Summarise this file", "Translate the attached memo into Japanese"):
             self.assertIsNone(judgement_hook.note_for(prompt), prompt[:30])
 
+    def test_words_that_requests_use_too_count_only_in_a_short_prompt(self):
+        request = "添付の売上ファイルを支店別に集計して、表の見出しを直して。" + "対象は先月分の全店舗です。" * 16
+        self.assertGreater(len(request), judgement_hook.BRIEF_CHARS)
+        self.assertIsNone(judgement_hook.note_for(request))
+        self.assertIsNone(judgement_hook.note_for("Thanks in advance. " + "Please summarise the sales by region. " * 6))
+        self.assertEqual(judgement_hook.note_for("見出しを直して"), judgement_hook.NOTE)
+        self.assertEqual(judgement_hook.note_for("thanks!"), judgement_hook.NOTE)
+
     def test_the_script_prints_the_context_or_nothing_and_never_fails(self):
         cmd = f'"{sys.executable}" "{HOOK}"'
         out = call_hook(cmd, "違う、正しくは 1234")

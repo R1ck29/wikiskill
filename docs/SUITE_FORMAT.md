@@ -12,7 +12,7 @@ my-suite/
 ```
 
 完成例: `examples/sales-analysis`（数値で採点）、`examples/translation-ja-en`（llm_judge で採点）。
-作ったら `python -m wikiskill check --suite my-suite --no-call` で形式を確認できます。
+作ったら `python -m wikiskill check --suite my-suite --no-call` で形式を確認できます（`split` の無いタスクがあれば、このときに書き足されます）。
 
 ## suite.json
 
@@ -44,13 +44,15 @@ my-suite/
 ## tasks.jsonl
 
 ```json
-{"id": "sales-001", "split": "train", "prompt": "東京店の1月の純売上は？", "answer": "4090", "files": ["2026-01/sales.csv"]}
+{"id": "sales-001", "prompt": "東京店の1月の純売上は？", "answer": "4090", "files": ["2026-01/sales.csv"]}
 ```
+
+付属の例は、スキルあり／なしを test で比べられるよう `split` を手で固定しています。自分の業務では書き写さないでください。
 
 | キー | 必須 | 意味 |
 |---|---|---|
 | `id` | ○ | 英数字で始まり、英数字と `. _ -` だけの 100 字以内。ファイル名に使うため、大文字小文字だけが違う重複や `CON`・`NUL` などは使えません |
-| `split` | | `train`（学習用）/ `val`（採否の判定用）/ `test`（最終評価用）。**書かなければ読み込み時に自動で決めて書き戻します**（train:val = 2:1、40 件からは 5 件に 1 件が test。詳細は [ARCHITECTURE.md](ARCHITECTURE.md) の「タスクの自動振り分け」）。`evolve` には train と val が各 1 件以上必要 |
+| `split` | | `train`（学習用）/ `val`（採否の判定用）/ `test`（最終評価用）。**書かなければ読み込み時に自動で決めて書き戻します**（決め方は [ARCHITECTURE.md](ARCHITECTURE.md) の「タスクの自動振り分け」。書き込めないフォルダではエラー）。`evolve` には train と val が各 1 件以上必要 |
 | `prompt` | ○ | タスク文 |
 | `answer` | 採点方法による | 正解。複数の正解はリスト（`["東京", "Tokyo"]`） |
 | `files` | | `files_dir` からの相対パス（`..` は不可）。エージェントの作業フォルダに同じ相対パスでコピーされます |
@@ -58,10 +60,11 @@ my-suite/
 
 **件数の目安**: 論文では train 16〜80、val 10〜40、test 85〜280 件でした。val が少ないと採否の判定がぶれるので、例は多いほど安定します。
 決まった確認用の問題があるときだけ `split` を手で書いてください。
-タスクを書かずに始める（`init --workspace`）スイートでは、tasks.jsonl は空のままで構いません。`feedback` の記録が 6 件たまると train 4・val 2 件になります。
+タスクを書かずに始める（`init --workspace`）スイートでは、tasks.jsonl は空のままで構いません（[ARCHITECTURE.md](ARCHITECTURE.md) の「例が無い業務の始め方」）。
 
 **途中での変更**: 正解・採点基準・タスク文は途中で直せます（タスク文やファイルを変えたタスクは次回に再実行されます）。
-train / val のタスクを**追加・削除**した場合、`evolve` は点数を比べられなくなるためエラーで止まります（新しい `--workspace` で始めてください）。
+train / val のタスクを**追加・削除**した場合、`evolve` は点数を比べられなくなるためエラーで止まります。例を後から足すときは
+`improve` で続けてください（`split` を書かずに足せば自動で train / val / test に入ります）。
 `improve` は同じワークスペースで続け、今のスキルで val を採点し直した点数を新しい基準にします（反復の途中で変えた場合はエラー）。
 
 ## 採点方法（`scorer.type`）
@@ -113,7 +116,7 @@ Excel ファイルの中身を確かめたい場合は、社内で使えるラ�
 | AI モデル作成 | `script` で出力（予測値ファイルなど）を読み、精度が閾値以上なら 1 |
 | Excel 編集・CSV 加工 | `script` で出力ファイルを検査 |
 | 翻訳・調査・パワポの構成 | `llm_judge`＋具体的な採点基準 |
-| 正解がまだ無い | [README](../README.md) の「正解を人が決める」の方法で 1 回人が確認して正解化 |
+| 正解がまだ無い | [README](../README.md) の「正解を人が決める」の方法で 1 回人が確認して正解化するか、タスクを書かずに普段の評価から始める（`init --workspace`） |
 
 `llm_judge` と人の採点は論文では評価されていない使い方です。採点のぶれは検証ゲートの判断に直接影響するため、
 採点基準を具体的に書き、val を多めに用意してください。

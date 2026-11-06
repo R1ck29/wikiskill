@@ -50,7 +50,7 @@ WikiSkill が行う呼び出しは 2 種類です。
 
 上限つきの実行（`improve --daily-budget`、自動の実行は既定 10 ドル）は、claude の出力にある `total_cost_usd` を費用として数えます。
 `--output-format` を変えてこの値が出なくなると費用を数えられず上限が効かなくなるので、`complete_args` / `agent_args` を変えるときは JSON 出力のままにしてください。
-codex は費用を報告しないため、上限つきの実行を 1 日 1 回にします。
+（費用を報告しない codex の扱いは README の「費用と API キー」）
 
 各引数の意図:
 
@@ -105,7 +105,7 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
   プロジェクト（またはプロジェクトの `.claude/skills`）なら個人用の `.claude/settings.local.json`（共有の settings.json に
   この PC のパスを書かないため）、プラグインなら `hooks/hooks.json` です。ほかの設定やフックはそのまま残し
   （変更が無ければファイルに触れない。シンボリックリンクはリンク先を書き換える）、最初の書き換えの前に `<設定ファイル>.wikiskill.bak` を作ります。
-  フックは sh / bash（Windows は Git Bash）で動く前提で、フックの実行に PowerShell を指定した Windows では動きません。コマンドは、組み込みを実行した Python のフルパスです。
+  フックは sh / bash（Windows は Git Bash）で動く前提で、フックの実行に PowerShell を指定した Windows では動きません。コマンドの Python は、グローバル設定とプロジェクトでは組み込みを実行した Python のフルパス、プラグインでは `python3`（Windows は `py`）です。
   その Python を消したり入れ替えたりしたら、組み込みをやり直してください。管理者の設定の `allowManagedHooksOnly` や `disableAllHooks` で
   フックが止められている環境では、評価にはスキルの説明文だけで気づくことになります（組み込み時に警告が出ます）。
   手で入れる場合は、`hooks.UserPromptSubmit` に `"<python>" "<スキル>/scripts/judgement_hook.py"` を実行する command フックを足します。

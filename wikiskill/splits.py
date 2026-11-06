@@ -56,13 +56,18 @@ def _kind(row: dict[str, Any]) -> str:
 
 
 def _keep_both(existing: list[dict[str, Any]], result: list[str], order: list[int]) -> None:
-    """Splitting each kind on its own can leave train or val empty (e.g. one good and one bad row);
-    move one new task over so a round can start."""
+    """Splitting each kind on its own, or the test share, can leave train or val empty (e.g. one good
+    and one bad row, or a 40th task added to 39 train tasks); move one new task over so a round can start:
+    a test task of this batch first, else one of the other split if that keeps at least one."""
     for missing, other in (("val", "train"), ("train", "val")):
         have = [r.get("split") for r in existing] + result
-        if missing not in have and have.count(other) >= 2 and other in result:
-            last = next(i for i in reversed(order) if result[i] == other)
-            result[last] = missing
+        if missing in have:
+            continue
+        movable = [i for i in reversed(order) if result[i] == "test"]
+        if not movable and have.count(other) >= 2:
+            movable = [i for i in reversed(order) if result[i] == other]
+        if movable:
+            result[movable[0]] = missing
 
 
 def fill_missing(tasks_path: Path, lock_dir: Path) -> int:
@@ -71,30 +76,34 @@ def fill_missing(tasks_path: Path, lock_dir: Path) -> int:
     A file with a line that is not JSON is left as it is, for the loader to report.
     """
     tasks_path = Path(tasks_path)
-    if not tasks_path.is_file() or not _missing(read_text(tasks_path)):
-        return 0
+    if not tasks_path.is_file() or not any(map(_unsplit, _parse(read_text(tasks_path)) or [])):
+        return 0  # checked before taking the lock: most loads have nothing to fill
     with locked(Path(lock_dir) / SPLIT_LOCK):
-        lines = [line for line in read_text(tasks_path).splitlines() if line.strip()]
-        try:
-            rows = [json.loads(line) for line in lines]
-        except json.JSONDecodeError:
+        lines = _lines(read_text(tasks_path))
+        rows = _parse(read_text(tasks_path))
+        todo = [i for i, r in enumerate(rows or []) if _unsplit(r)]
+        if not rows or not todo:
             return 0
-        todo = [i for i, r in enumerate(rows) if isinstance(r, dict) and not r.get("split")]
-        if not todo:
-            return 0
-        done = [r for r in rows if isinstance(r, dict) and r.get("split")]
+        done = [r for r in rows if isinstance(r, dict) and not _unsplit(r)]
         for i, split in zip(todo, assign(done, [rows[i] for i in todo])):
-            lines[i] = json.dumps({**rows[i], "split": split}, ensure_ascii=False)
+            lines[i] = json.dumps({**rows[i], "split": split}, ensure_ascii=False)  # other lines stay as written
         backup_once(tasks_path)
         write_text(tasks_path, "\n".join(lines) + "\n")
         return len(todo)
 
 
-def _missing(text: str) -> bool:
-    """Check before taking the lock, with the same rule as fill_missing: some task has no split
-    (no key, null or ""). A line that is not JSON is the loader's to report."""
+def _lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.strip()]
+
+
+def _parse(text: str) -> list[Any] | None:
+    """The rows of a tasks file (one per non-blank line), or None when a line is not JSON (the loader reports that)."""
     try:
-        rows = [json.loads(line) for line in text.splitlines() if line.strip()]
+        return [json.loads(line) for line in _lines(text)]
     except json.JSONDecodeError:
-        return False
-    return any(isinstance(r, dict) and not r.get("split") for r in rows)
+        return None
+
+
+def _unsplit(row: Any) -> bool:
+    """A task without a split: no key, null or ""."""
+    return isinstance(row, dict) and not row.get("split")

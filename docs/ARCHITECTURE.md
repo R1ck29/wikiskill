@@ -45,7 +45,7 @@ WikiSkill が何をどの順で行い、どのファイルが何を担当する�
 自動の実行は claude ではモデル `sonnet`（別名なので Bedrock や社内ゲートウェイでもその環境の Sonnet に解決される）を使い、1 日の上限（`--daily-budget`、既定 10 ドル）を `backends.Budget` が守ります。
 各呼び出しが報告する費用をワークスペースの `spend.json` に足し、上限に達すると次の呼び出しの前に `BudgetExceeded` で止めます
 （再試行も採点もせず、完了した段階はそのまま残るので、次の実行が続きから進めます）。途中で止まったラウンドがあれば、`feedback` は
-`--min-new` 件を待たずに次の 1 件で `improve` を起動します（`improve.unfinished_round`。上限の確認も、0.2 の gen-NNN フォルダを `improve` と同じく対象にします。`background.log` は保存されたパスのままです）。費用を報告しない codex は 1 日 1 回にします。
+`--min-new` 件を待たずに次の 1 件で `improve` を起動します（`improve.unfinished_round`）。費用を報告しない codex は 1 日 1 回にします。
 ラウンドの途中で別のモデル（または別の採点モデル）に変わったときは、ゲートを通す前に（その反復のゲートが決まった後なら次の反復の前に）今のスキルで val を採点し直して R_best にするので、
 ゲートが別のモデルの点数と比べることはありません。失敗した `improve` は `improve.json` に時刻と原因を残し、次の `feedback` が知らせます（上限で止まった実行はそれを消さず、最後まで進んだ実行が消します）。
 自動の実行は隠しオプション `--automatic` 付きで起動され、保存済みの設定を書き換えず、`improve.json` が消されていれば作り直しません。
@@ -67,7 +67,7 @@ Windows では隠れたコンソールで起動するので、CLI を呼ぶた�
 - **いつ**: スイートを読み込むとき（`config.load_suite`）と、評価の記録を取り込むとき（`improve.merge_pending`）。決めた split は tasks.jsonl に書き戻し、
   後から動かさない（動くと val の点数を比べられなくなる）。手で書いた split はそのまま使う。最初の書き換えの前に `tasks.jsonl.bak` を残す。
 - **train と val**: 2:1（論文の比率）。評価の記録は「良い」「違う」ごとに 2:1 に分けるので、利用者が違うと言った結果も val に入り、
-  ゲートが「簡単な依頼だけで満点」になりにくい。分けた結果 train か val が空になるときは 1 件を移して、ラウンドを始められるようにする。
+  ゲートが「簡単な依頼だけで満点」になりにくい。分けた結果 train か val が空になるときは、新しいタスクを 1 件（test に入ったものを優先して）移し、ラウンドを始められるようにする。
 - **test**: タスクが `TEST_FROM`（40）件になってから、5 件に 1 件だけ。test は育成に使わず、依頼されたときの `evaluate`・`compare` にしか使わないので、
   少ないうちは学習と、ぶれにくいゲートに回す方が役に立つ。40 件の時点で val はおよそ 13 件（論文の最小の val 10 件を超える）。
 - **順番**: 書かれた順ではなく id のハッシュ順に振り分ける（月ごとに並んだ例が train と val に偏らないように）。どの環境でも同じ結果になる。
@@ -83,7 +83,7 @@ Windows では隠れたコンソールで起動するので、CLI を呼ぶた�
 2. 評価の記録は上の「タスクの自動振り分け」で train と val に分かれる。最初のラウンドは記録が `FIRST_ROUND`（6）件、つまり train 4・val 2 件そろうまで待つ
    （良い・違うの内訳によらず 4 と 2。`improve.rows_needed` / `merge_ready`。train か val だけ書かれたスイートは足りない側が 1 件入れば始まる）。取り込んだ後にラウンドが始まる前に止まった `improve` は、次の記録 1 件で起動し直す（`improve.unfinished_round`）。4 件は、スキル提案者が実行記録を 4 件以上読むという規則（付録 E.3 の規則 4）を満たす最小の数。
 3. 最初のラウンドは論文と同じく、スキルなしで val を解いた点数を R_best にして始める。以後は `--min-new`（3）件ごとに新しいラウンドに入り、
-   val も 3 件に 1 件ずつ増える。
+   記録は同じ振り分けで train / val（40 件目からは test にも）に加わる。
 4. どの業務のスイートに記録するかは、スキルの手順書に従って Claude が決める（`list` で既存の業務を見て、入力・出力・良し悪しの基準が同じなら同じスイート）。
    新しい業務を作るときだけ利用者に確認する。
 
@@ -144,7 +144,7 @@ tools/integrate.py                             グローバル設定・プラグ
 CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼むときの手順と、利用者が貼り付ける文章
 ```
 
-依存の向きは `cli → improve → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → config/patching/workspace/util` の一方向です。
+依存の向きは `cli → improve → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → config/patching/workspace → splits/util` の一方向です。
 
 拡張するときに触る場所:
 
@@ -185,5 +185,6 @@ CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼む�
 11. **CLI の障害は採点しない**: 障害を「不正解」として wiki や採否判定に混ぜないためです（[CONFIGURATION.md](CONFIGURATION.md) 4 章）。
 
 論文にない追加機能: 人による採点（ハイブリッド / 毎回）、`script`・`llm_judge` などの採点方法、途中再開、
-`evaluate` / `compare` / `export` コマンド、実際の利用からの改善（`feedback` と `improve`）、例を用意しない始め方（`init --workspace`、`list`）。論文が挙げる限界（スキル検索をしない全文埋め込み、wiki の自動整理がない、
+`evaluate` / `compare` / `export` コマンド、実際の利用からの改善（`feedback` と `improve`）、例を用意しない始め方（`init --workspace`、`list`）、
+train / val / test の自動の振り分け（`splits.py`）、評価を知らせるフック（`judgement_hook.py`）。論文が挙げる限界（スキル検索をしない全文埋め込み、wiki の自動整理がない、
 毎回の改善を必須とする厳しい採否基準など）はこの実装にもそのまま当てはまります。

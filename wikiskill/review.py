@@ -3,8 +3,8 @@
 1. `collect` runs the agent (no skills) on tasks and writes a CSV sheet.
 2. A person marks each row OK / NG, writes the corrected answer for NG rows and,
    optionally, a rubric note (what a good answer must contain).
-3. `apply_sheet` writes those references into the tasks file (the original is kept
-   as <tasks>.bak), after which the evolve loop scores automatically.
+3. `apply_sheet` writes those references into the tasks file (<tasks>.bak keeps the version from
+   before WikiSkill first changed it, which may be the automatic split), after which the evolve loop scores automatically.
 """
 from __future__ import annotations
 

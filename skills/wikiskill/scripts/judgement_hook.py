@@ -14,26 +14,26 @@ import sys
 import unicodedata
 
 MAX_CHARS = 2000  # longer prompts are new requests, not a judgement
+BRIEF_CHARS = 200  # words that new requests use too ("直して", "thanks") count only in a prompt this short
 SHORT_CHARS = 30  # a bare "OK" or "nope" is a judgement only as a whole short message
 
 # Matched after NFKC, so full-width ＯＫ and ｇｏｏｄ count. English words may sit next to kana
 # ("wrongです") but not inside other words ("goodness"): only Latin letters may not touch them.
 _EN = r"(?<![a-z])(?:{})(?![a-z])"
 JUDGEMENT = re.compile("|".join([
-    # Japanese, good
+    # Japanese, good / wrong
     r"良い|良かった|よかった|いいね|いい感じ|いいです|完璧|ばっちり|バッチリ|その通り|そのとおり|合って(?:る|います|ます)"
-    r"|正しい|正解|素晴らしい|すばらしい|さすが|助かり?ます|助かった|ありがとう|これで(?:いい|よい|ok)|問題(?:ない|ありません)",
-    # Japanese, wrong
-    r"違う|違い?ます|ちがう|違って|間違|誤り|正しくは|じゃなくて|ではなくて|そうじゃな|ダメ(?!ージ)|だめ|やり直"
-    r"|おかしい|惜しい|足りない|ずれて|直して|修正して",
-    # English, good
-    _EN.format(r"good|great|perfect|correct|nice|excellent|awesome|exactly|lgtm|well done|looks right"
-               r"|that'?s right|spot on|thanks|thank you"),
-    # English, wrong
-    _EN.format(r"wrong|incorrect|not right|not quite|not correct|should be|should have been|it'?s actually"
-               r"|mistake|that'?s not|not what i|try again|redo|bad|off by"),
-    # both languages: NG
-    _EN.format("ng"),
+    r"|正しい|正解|素晴らしい|すばらしい|さすが|助かり?ます|助かった|これで(?:いい|よい|ok)|問題(?:ない|ありません)",
+    r"違う|違い?ます|ちがう|違って|間違|誤り|正しくは|じゃなくて|ではなくて|そうじゃな|やり直|おかしい|惜しい|ずれて",
+    # English, good / wrong
+    _EN.format(r"good|perfect|correct|excellent|awesome|exactly|lgtm|well done|looks right|that'?s right|spot on"),
+    _EN.format(r"wrong|incorrect|not right|not quite|not correct|should have been|it'?s actually|that'?s not"
+               r"|not what i|off by"),
+    _EN.format("ng"),  # both languages
+]), re.IGNORECASE)
+BRIEF = re.compile("|".join([
+    r"ありがとう|ダメ(?!ージ)|だめ|足りない|直して|修正して",
+    _EN.format(r"great|nice|thanks|thank you|should be|mistake|try again|redo|bad"),
 ]), re.IGNORECASE)
 SHORT = re.compile(r"^(?:ok(?:ay)?|オーケー|オッケー|おけ|よし|nope|yep|no)[\s!！.。、,]*$", re.IGNORECASE)
 NOTE = (
@@ -49,7 +49,8 @@ def note_for(prompt):
     text = unicodedata.normalize("NFKC", prompt).strip()
     if not text or len(text) > MAX_CHARS or text.startswith("/"):
         return None
-    if JUDGEMENT.search(text) or (len(text) <= SHORT_CHARS and SHORT.match(text)):
+    if (JUDGEMENT.search(text) or (len(text) <= BRIEF_CHARS and BRIEF.search(text))
+            or (len(text) <= SHORT_CHARS and SHORT.match(text))):
         return NOTE
     return None
 
