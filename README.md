@@ -42,6 +42,11 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 育ったスキルは `~/.claude/skills` に書き出されて全プロジェクトで使えるようになります。
 常に消費するのは 1 セッションあたり約 50 トークン（スキルの説明文）で、呼び出したときだけ約 850 トークン（手順書）が加わります。
 
+**評価の見落としを防ぐフック**: 組み込むと、Claude Code の設定に `UserPromptSubmit` フックも登録されます。「良い」「いいね」「違う」
+「正しくは」のような評価らしい発言のときだけ、Claude に「評価なら記録して」という短い注意（約 150 トークン）を渡します。
+スキルの説明文だけでは「いいね」の一言を見落とすことがありますが、フックがあれば拾えます。記録するかどうかは、今までどおり Claude が判断します。
+入れたくない場合は `--no-hook` を付けて組み込み直します（すでに入っているフックも外れます）。管理者の設定でフックが禁止されていると、組み込み時に警告が出ます。
+
 **A. ZIP から自分のグローバル設定に入れる（社内での標準）**: GitHub の「Code → Download ZIP」で取得して展開し、
 [INSTALL_PROMPT.md](INSTALL_PROMPT.md) の文章を Claude Code に貼り付けて送ります。Claude が [CLAUDE.md](CLAUDE.md) の手順に従って
 `~/.claude/skills/wikiskill` に入れ、動作を確かめます。特定のプラグインやプロジェクトに入れたい場合の文章も同じファイルにあります。
@@ -53,7 +58,8 @@ python tools/integrate.py ~/.claude/skills --skills-dir --force
 
 **B. プラグインとして入れる（GitHub に接続できる環境）**: Claude Code のチャット欄に
 `/plugin install wikiskill --marketplace R1ck29/wikiskill` と入力します（`/wikiskill:wikiskill` で呼び出せます）。
-A と B を両方入れると同じスキルが 2 つ並ぶので、どちらか一方にしてください。
+A と B を両方入れると同じスキルが 2 つ並ぶので、どちらか一方にしてください。B で入るフックは `python3` で起動するので、
+`python3` が無い Windows では A を使ってください。
 
 ## 費用と API キー
 

@@ -21,13 +21,15 @@ WikiSkill は、業務の例からエージェント用スキル（SKILL.md）�
    | スキルを並べたフォルダ | 指定されたフォルダのサブフォルダごとに `SKILL.md` がある | そのフォルダと `--skills-dir` |
 
 2. 実行する。`python3` が無ければ Windows は `py`、それ以外は `python` に変える。`--force` は以前に入れた
-   WikiSkill だけを置き換え、ほかのフォルダは消さない（初回に付けても害はない）。
+   WikiSkill だけを置き換え、ほかのフォルダは消さない（初回に付けても害はない）。評価を見落とさないためのフックも
+   設定ファイルに登録される（ほかの設定は残る）。利用者がフックを望まないときだけ `--no-hook` を付ける。
 
    ```bash
    python3 "<このフォルダ>/tools/integrate.py" ~/.claude/skills --skills-dir --force
    ```
 
 3. 表示された入れ先が意図どおり（グローバルなら利用者のホームフォルダの `.claude/skills/wikiskill`）か確かめ、
+   `hook: UserPromptSubmit added to ...` が出たことも確かめる（`warning:` が出たら、その内容と「評価はスキルの説明文だけで拾うことになる」と伝える）。
    続けて表示された `check --no-call` を実行し、`claude` コマンドが `NOT FOUND` でないことを確かめる（モデルは呼ばない）。
    `NOT FOUND` なら、CLI のインストールか [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 3 章の `command` 設定が必要と伝える。
 4. 同じ名前の WikiSkill がプラグインとしても入っていると（`claude plugin list` に `wikiskill` がある）2 つ並んで紛らわしいので、

@@ -135,8 +135,12 @@ wikiskill/
 skills/wikiskill/SKILL.md                      Claude が CLI を代わりに実行するための手順書（呼び出し時だけ読み込まれる）
 skills/wikiskill/scripts/run_wikiskill.py      起動スクリプト。スキルフォルダ内 → 親フォルダの順に wikiskill パッケージを探し、
                                                Python が 3.9 未満なら PATH 上の新しい python3.X で実行し直す
+skills/wikiskill/scripts/judgement_hook.py     UserPromptSubmit フック。評価らしい発言のときだけ「評価なら B に従って記録」という注意を
+                                               Claude に渡す（判断は Claude。エラーでも発言は止めない。パッケージを読み込まないので速い）
+hooks/hooks.json                               プラグインとして入れたときの同じフック
 tools/integrate.py                             グローバル設定・プラグイン・プロジェクトへ、パッケージ・docs・examples を同梱した
-                                               自己完結のスキルフォルダをコピー（全体を作ってから入れ替えるので、失敗しても前の版が残る）
+                                               自己完結のスキルフォルダをコピー（全体を作ってから入れ替えるので、失敗しても前の版が残る）し、
+                                               上のフックを設定ファイルに登録する（`--no-hook` で外す）
 CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼むときの手順と、利用者が貼り付ける文章
 ```
 

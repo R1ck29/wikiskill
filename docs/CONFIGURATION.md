@@ -101,6 +101,14 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
   別名が使えない環境では `ANTHROPIC_DEFAULT_SONNET_MODEL` でその環境のモデル名を指定してください。
 - **管理者の設定（managed settings）**: `--safe-mode` でも管理者の設定は効きます。`bypassPermissions` が禁止されていると
   エージェント実行が失敗するので、3 章の例のように `acceptEdits` と許可するツールを指定してください（`check` で確かめられます）。
+- **評価を知らせるフック**: `tools/integrate.py` が登録します。登録先は、グローバル設定なら `~/.claude/settings.json`、
+  プロジェクト（またはプロジェクトの `.claude/skills`）なら個人用の `.claude/settings.local.json`（共有の settings.json に
+  この PC のパスを書かないため）、プラグインなら `hooks/hooks.json` です。ほかの設定やフックはそのまま残し
+  （変更が無ければファイルに触れない。シンボリックリンクはリンク先を書き換える）、最初の書き換えの前に `<設定ファイル>.wikiskill.bak` を作ります。
+  フックは sh / bash（Windows は Git Bash）で動く前提で、フックの実行に PowerShell を指定した Windows では動きません。コマンドは、組み込みを実行した Python のフルパスです。
+  その Python を消したり入れ替えたりしたら、組み込みをやり直してください。管理者の設定の `allowManagedHooksOnly` や `disableAllHooks` で
+  フックが止められている環境では、評価にはスキルの説明文だけで気づくことになります（組み込み時に警告が出ます）。
+  手で入れる場合は、`hooks.UserPromptSubmit` に `"<python>" "<スキル>/scripts/judgement_hook.py"` を実行する command フックを足します。
 - **ネットワークドライブ**: スイートとワークスペースはローカルのドライブに置いてください。ファイルロックが使えないドライブでは
   `cannot lock ... keep WikiSkill folders on a local drive` と表示して止まります。
 - **WikiSkill 自身の通信**: ありません（ネットワーク系モジュールを使っていないことを `tests/test_no_network.py` で確認しています）。
