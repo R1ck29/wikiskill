@@ -13,7 +13,7 @@ Automatic runs use the `sonnet` alias on the claude CLI and a daily budget (AUTO
 that fails notes the error in improve.json (`record_failure`), and the next feedback reports it,
 as it does a background start that died before the improve command ran (BACKGROUND_ERR).
 An automatic run saves the settings it was started with, not its own policy options.
-All automatic runs together also stop for the day at AUTO_TOTAL_BUDGET (total_budget).
+All automatic runs together also stop for the day at a total (total_budget; `budget --total` changes it).
 
 A suite may also start with no tasks at all (`init --workspace`): its train/val tasks then come only
 from feedback, and the first round waits for FIRST_ROUND rows (rows_needed). Like the paper, that
@@ -65,7 +65,8 @@ MIN_NEW = 3  # pending feedback rows that start a new round (improve --min-new d
 ITERATIONS = 3  # iterations per improve round (improve --iterations default)
 AUTO_MODEL = {"claude": "sonnet"}  # model of automatic runs: the alias resolves on every provider (Bedrock too)
 AUTO_BUDGET = 10.0  # USD a day for automatic runs unless `improve --daily-budget` was saved
-AUTO_TOTAL_BUDGET = 20.0  # USD a day for all automatic runs of this user together
+AUTO_TOTAL_BUDGET = 20.0  # USD a day for all automatic runs of this user together (default of `budget --total`)
+TOTAL_SETTINGS = "settings.json"  # in work_root(): the daily total saved by `budget --total`
 # the first round of a suite without tasks: 4 train rows, so the Skill Proposer can read the 4 traces
 # its rule asks for (paper Appendix E.3, rule 4), and 2 val rows for the gate (splits.assign shares 2:1)
 FIRST_ROUND = 6
@@ -216,6 +217,61 @@ def merge_pending(suite_root: Path, tasks_path: Path) -> int:
         return len(new)
 
 
+def forget(suite: Suite, task_id: str | None) -> str:
+    """Take back one recorded judgement (the newest when `task_id` is None) and say what was done.
+
+    A row still in the queue is dropped. A row already merged is removed from the tasks file and the
+    merge history only where a round can adopt a changed task set (between rounds, or before the
+    current iteration has run any task), and never while an improve holds the workspace; the next
+    improve then starts a new round without it. Its input files go too.
+    """
+    root = suite.root
+    with locked(root / QUEUE_LOCK):
+        queue = _queue(root)
+        history_path = root / MERGED
+        history = _rows(read_text(history_path)) if history_path.is_file() else []
+        if task_id is None:
+            if not queue and not history:
+                raise ConfigError("there is no recorded feedback to forget")
+            task_id = (queue or history)[-1]["id"]
+        if any(r["id"] == task_id for r in queue):
+            rest = [r for r in queue if r["id"] != task_id]
+            write_text(root / FEEDBACK, "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rest))
+            where = "the feedback queue"
+        elif any(r["id"] == task_id for r in history):
+            lines = [line for line in read_text(suite.tasks_path).splitlines() if line.strip()]
+            if not any(t.id == task_id and t.split == "test" for t in suite.tasks):  # test never enters a round
+                _between_rounds(root)
+            backup_once(suite.tasks_path)
+            write_text(suite.tasks_path, "".join(line + "\n" for line in lines if json.loads(line).get("id") != task_id))
+            write_text(history_path, "".join(json.dumps(r, ensure_ascii=False) + "\n"
+                                             for r in history if r["id"] != task_id))
+            where = "the tasks; the next improve starts a new round without it"
+        else:
+            raise ConfigError(f"{task_id} is not a recorded feedback row of this suite "
+                              f"(see {FEEDBACK} and {MERGED})")
+    shutil.rmtree(suite.files_dir / FEEDBACK_FILES / task_id, ignore_errors=True)
+    return f"forgot {task_id} (removed from {where})"
+
+
+def _between_rounds(suite_root: Path) -> None:
+    """Raise unless the saved workspace can take a changed task set now (see Evolution._load_state)."""
+    settings = load_settings(suite_root)
+    if not settings:
+        return
+    ws = _workspace(settings)
+    if not ws.root.is_dir():
+        return
+    with ws.lock():  # raises LockBusy while an improve runs
+        state = ws.load_state()
+        if state is None:
+            return
+        k = state["iteration"]
+        if state["r_best"] is None or state["stage"] != "rollout" or ws.raw_dir(k).exists():
+            raise ConfigError(f"iteration {k} is using this task now; run forget again after it finishes "
+                              "(`status` shows the progress)")
+
+
 # ----- automatic start ------------------------------------------------------------------
 def save_settings(suite_root: Path, settings: tuple[Path, int, Sequence[str]] | None,
                   keep_error: bool = False) -> None:
@@ -337,8 +393,25 @@ def work_root() -> Path:
 
 
 def total_budget() -> Budget:
-    """The shared budget of all automatic runs: AUTO_TOTAL_BUDGET a day, ledger in work_root()."""
-    return Budget(work_root() / "spend-total.json", AUTO_TOTAL_BUDGET, label="the daily total of automatic runs")
+    """The shared budget of all automatic runs (total_limit() a day), ledger in work_root()."""
+    return Budget(work_root() / "spend-total.json", total_limit(), label="the daily total of automatic runs")
+
+
+def total_limit() -> float:
+    """USD a day for all automatic runs together: `budget --total` saves it, AUTO_TOTAL_BUDGET otherwise."""
+    try:
+        value = read_json(work_root() / TOTAL_SETTINGS)["daily_total_usd"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return AUTO_TOTAL_BUDGET
+    ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and value > 0
+    return float(value) if ok else AUTO_TOTAL_BUDGET
+
+
+def set_total_limit(usd: float) -> None:
+    if not (math.isfinite(usd) and usd > 0):
+        raise ConfigError("--total must be a positive number of USD")
+    work_root().mkdir(parents=True, exist_ok=True)
+    write_json(work_root() / TOTAL_SETTINGS, {"daily_total_usd": usd})
 
 
 def background_log(settings: dict[str, Any]) -> Path:

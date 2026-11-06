@@ -31,6 +31,7 @@ from .improve import (
     background_log,
     export_skills,
     feedback_footer,
+    forget,
     load_settings,
     merge_ready,
     pending,
@@ -39,6 +40,7 @@ from .improve import (
     rows_needed,
     rows_to_start,
     save_settings,
+    set_total_limit,
     start_improve,
     startable,
     total_budget,
@@ -187,6 +189,10 @@ def _add_helper_commands(sub: Any) -> None:
     p.add_argument("--root", type=_path, default=None, help="folder to look in (default ~/wikiskill-work)")
     p.set_defaults(func=cmd_list)
 
+    p = sub.add_parser("budget", help="show (or set) the daily total of all automatic runs")
+    p.add_argument("--total", type=float, help="new daily total in USD for all automatic runs together")
+    p.set_defaults(func=cmd_budget)
+
     p = sub.add_parser("feedback", help="queue a judged real-world result for the next `improve`")
     p.add_argument("suite", type=_path)
     p.add_argument("--verdict", choices=["good", "bad"], required=True)
@@ -196,6 +202,13 @@ def _add_helper_commands(sub: Any) -> None:
     p.add_argument("--note", help="the user's reason or comment")
     p.add_argument("--file", type=_path, action="append", default=[], help="input file of the request (repeatable)")
     p.set_defaults(func=cmd_feedback)
+
+    p = sub.add_parser("forget", help="take back a recorded feedback row (a wrong judgement or answer)")
+    p.add_argument("suite", type=_path)
+    which = p.add_mutually_exclusive_group(required=True)
+    which.add_argument("--last", action="store_true", help="the newest recorded row")
+    which.add_argument("--id", help="the id printed by `feedback` (fb-...)")
+    p.set_defaults(func=cmd_forget)
 
     p = sub.add_parser("status", help="show the progress of a workspace")
     p.add_argument("workspace", type=_path)
@@ -514,6 +527,22 @@ def cmd_feedback(args: argparse.Namespace) -> int:
                   else f"started: `improve` runs in the background (log: {background_log(settings)})")
             return 0
     print("ready: run `improve` to learn from them")  # never run before, human review, or the start failed
+    return 0
+
+
+def cmd_budget(args: argparse.Namespace) -> int:
+    if args.total is not None:
+        set_total_limit(args.total)
+    budget = total_budget()
+    day = budget.today()
+    print(f"automatic runs today: ${day['usd']:.2f} of ${budget.limit:.2f} a day for all suites together "
+          f"({day['runs']} run(s); ledger {budget.path}). Each suite also has its own limit (improve --daily-budget).")
+    return 0
+
+
+def cmd_forget(args: argparse.Namespace) -> int:
+    suite = load_suite(args.suite, require_answers=False, allow_empty=True)
+    print(forget(suite, None if args.last else args.id))
     return 0
 
 

@@ -565,8 +565,8 @@ class BackgroundStartTest(TempDirTest):
         trim_log(self.root / "missing.log")  # nothing to do
 
 
-class ColdStartTest(TempDirTest):
-    """A suite with no tasks learns from feedback alone (`init --workspace`)."""
+class FeedbackOnlySuite(TempDirTest):
+    """A suite made by `init --workspace` with no tasks, as SKILL.md section B makes one."""
 
     def setUp(self):
         super().setUp()
@@ -588,6 +588,10 @@ class ColdStartTest(TempDirTest):
         code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", f"real {i}", "--output", "TOTAL")
         self.assertEqual(code, 0, out)
         return out
+
+
+class ColdStartTest(FeedbackOnlySuite):
+    """A suite with no tasks learns from feedback alone (`init --workspace`)."""
 
     def test_the_first_round_waits_for_six_rows_then_starts_by_itself(self):
         self.assertEqual(read_text(self.suite / "tasks.jsonl"), "")
@@ -661,6 +665,73 @@ class ColdStartTest(TempDirTest):
         self.assertIn("task: sales questions", out)
         self.assertIn("damaged", out)
         self.assertIn("no suites in", run_cli("list")[1])  # default: ~/wikiskill-work (empty here)
+
+
+class ForgetTest(FeedbackOnlySuite):
+    """`forget` takes back a wrong record."""
+
+    def tasks(self):
+        return [json.loads(line) for line in read_text(self.suite / "tasks.jsonl").splitlines()]
+
+    def test_a_waiting_row_and_its_files_are_dropped(self):
+        source = self.root / "in.csv"
+        source.write_text("a,b\n", encoding="utf-8")
+        self.feedback(0)
+        code, out = run_cli("feedback", self.suite, "--verdict", "good", "--prompt", "real 1", "--output", "TOTAL",
+                            "--file", source)
+        task_id = out.split()[1].rstrip(";")
+        self.assertTrue((self.suite / "files" / "fb" / task_id).is_dir())
+        code, out = run_cli("forget", self.suite, "--last")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"forgot {task_id} (removed from the feedback queue)", out)
+        self.assertEqual([r["prompt"] for r in pending(self.suite)], ["real 0"])
+        self.assertFalse((self.suite / "files" / "fb" / task_id).exists())
+
+    def test_a_merged_row_leaves_the_tasks_between_rounds_only(self):
+        for i in range(6):
+            self.feedback(i)
+        merge_pending(self.suite, self.suite / "tasks.jsonl")
+        first = self.tasks()[0]["id"]
+        code, out = run_cli("forget", self.suite, "--id", first)
+        self.assertEqual(code, 0, out)
+        self.assertIn("the next improve starts a new round without it", out)
+        self.assertNotIn(first, [t["id"] for t in self.tasks()])
+        self.assertNotIn(first, read_text(self.suite / MERGED))
+        self.assertEqual(run_cli("forget", self.suite, "--id", first)[0], 2)  # already gone
+
+        ws = Workspace(self.ws)
+        ws.init()
+        ws.save_state({"suite": "sales", "iteration": 2, "stage": "validate", "r_best": 0.5, "tasks": {}})
+        code, out = run_cli("forget", self.suite, "--last")
+        self.assertEqual(code, 2)
+        self.assertIn("iteration 2 is using this task now", out)
+        self.assertEqual(len(self.tasks()), 5)
+
+        tasks = self.tasks()  # a test task never enters a round, so it can go at any time
+        tasks[-1]["split"] = "test"
+        (self.suite / "tasks.jsonl").write_text("".join(json.dumps(t) + "\n" for t in tasks), encoding="utf-8")
+        self.assertEqual(run_cli("forget", self.suite, "--id", tasks[-1]["id"])[0], 0)
+        self.assertEqual(len(self.tasks()), 4)
+
+        with ws.lock():  # an improve is running
+            code, out = run_cli("forget", self.suite, "--last")
+        self.assertEqual(code, 1)
+        self.assertIn("another evolve or improve is running", out)
+
+    def test_the_daily_total_can_be_changed(self):
+        code, out = run_cli("budget")
+        self.assertIn(f"$0.00 of ${AUTO_TOTAL_BUDGET:.2f} a day", out)
+        code, out = run_cli("budget", "--total", "35")
+        self.assertEqual(code, 0, out)
+        self.assertIn("of $35.00 a day", out)
+        self.assertEqual(total_budget().limit, 35.0)
+        self.assertEqual(run_cli("budget", "--total", "0")[0], 2)
+        (self.root / "home" / "wikiskill-work" / "settings.json").write_text("{broken", encoding="utf-8")
+        self.assertEqual(total_budget().limit, AUTO_TOTAL_BUDGET)  # a damaged file falls back to the default
+
+    def test_nothing_to_forget(self):
+        self.assertEqual(run_cli("forget", self.suite, "--last")[0], 2)
+        self.assertEqual(run_cli("forget", self.suite, "--id", "fb-unknown")[0], 2)
 
 
 if __name__ == "__main__":

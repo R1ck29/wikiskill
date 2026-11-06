@@ -94,7 +94,8 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
 
 ## 4. 社内環境での注意
 
-- **認証**: WikiSkill は認証情報を扱わず、CLI がいつもどおり認証します（`--safe-mode` でも認証は通常どおり）。API キーなら
+- **認証**: WikiSkill は認証情報を扱わず、CLI がいつもどおり認証します（`--safe-mode` でも認証は通常どおり。
+  開発中に実際のモデル呼び出しで確かめたのはサブスクリプションのログインだけなので、API キーの環境では最初に `check` を実行して確かめてください）。API キーなら
   `ANTHROPIC_API_KEY`（または Claude Code 設定の `apiKeyHelper`）、Bedrock・Vertex・社内ゲートウェイならその環境変数を、
   `claude` を実行する環境で設定してください。`feedback` が裏で起動する自動の改善は、記録した Claude Code のセッションの環境変数を引き継ぎます。
 - **自動の改善のモデル**: claude では別名 `sonnet` を渡します。Bedrock や社内ゲートウェイでも CLI がその環境の Sonnet に解決しますが、
@@ -109,6 +110,8 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
   その Python を消したり入れ替えたりしたら、組み込みをやり直してください。管理者の設定の `allowManagedHooksOnly` や `disableAllHooks` で
   フックが止められている環境では、評価にはスキルの説明文だけで気づくことになります（組み込み時に警告が出ます）。
   手で入れる場合は、`hooks.UserPromptSubmit` に `"<python>" "<スキル>/scripts/judgement_hook.py"` を実行する command フックを足します。
+  実際の Claude Code で動きを確かめたのは macOS だけです。Windows（Git Bash）や管理者の設定がある環境では、組み込みの後に
+  新しい会話で何か結果を出してもらい、「違う」と返して、Claude が記録するか（初回は「覚えますか？」と聞くか）を確かめてください。
 - **ネットワークドライブ**: スイートとワークスペースはローカルのドライブに置いてください。ファイルロックが使えないドライブでは
   `cannot lock ... keep WikiSkill folders on a local drive` と表示して止まります。
 - **WikiSkill 自身の通信**: ありません（ネットワーク系モジュールを使っていないことを `tests/test_no_network.py` で確認しています）。

@@ -55,7 +55,8 @@ Windows では隠れたコンソールで起動するので、CLI を呼ぶた�
 記録の追加と取り込みは短いロック（スイートの `feedback.lock`）を順番に取るため、取り込み中に届いた記録も失われません（クラッシュで途中まで書かれた行は読み飛ばし、残りの記録は使います）。
 ファイルロックが使えないドライブ（一部のネットワークドライブ）では、待ち続けずに理由を示して止まります。
 `feedback` の記録は、正解があれば（good の結果、または bad で示された正解）その正解に、正解の無い bad は「この応答は違うと言われた」という採点基準になります。後者は採点方法が `llm_judge` か `script` のスイートでだけ記録できます。
-自動の実行はワークスペースごとの上限に加えて、すべての自動の実行の合計（`improve.total_budget`、1 日 20 ドル、`~/wikiskill-work/spend-total.json`）でも止まります。
+自動の実行はワークスペースごとの上限に加えて、すべての自動の実行の合計（`improve.total_budget`、既定 1 日 20 ドル、`budget --total` で `~/wikiskill-work/settings.json` に保存、
+台帳は `~/wikiskill-work/spend-total.json`）でも止まります。
 台帳の更新は OS のファイルロックの中で行うので、別の業務の実行と同時に書いても費用が消えません（ロックが使えないドライブではロックなしで数えます）。
 書き出し（`improve --export`）が上書きするのは、WikiSkill が書き出したスキル（`skills.exported_by_wikiskill`）だけです。
 
@@ -96,6 +97,9 @@ Windows では隠れたコンソールで起動するので、CLI を呼ぶた�
 - 逆に「違う」（直しの指示も含む）だけでも育つ。直しと正しい結果がそろえば正解付きのタスクになり、スキルなしでは解けなかった例なので学ぶことが多い。
   ただし val も最初に間違えた例だけになるため、もともと正しくできていた依頼で悪くならないかは確かめられない。「良い」も時々言ってもらうとその確認になる。
 - 黙って使われた結果は記録しない。誤った正解が val に入ると採否の判定が狂うため。
+- 評価かどうか、直しの指示から正解が何かは Claude が会話から判断するので、取り違えて誤った記録を残すことがある。
+  気づいたら `forget` で取り消せる（取り込み済みの記録は、改善の最中でないときだけ）。気づかれない誤りは採否の判定を狂わせ続ける。
+- フックが拾うのは評価や直しらしい言葉を含む発言だけで、見逃しや誤って反応する割合は実際の利用では測っていない。
 
 ### 各エージェントに見せる情報
 
@@ -118,7 +122,7 @@ wikiskill/
   proposer.py     スキル提案者（ReAct ループ、読み取り専用サンドボックス、提案の検証）
   scoring.py      採点（exact/contains/regex/number/script/llm_judge）とレビューシート
   review.py       ハイブリッド方式（1 回だけ人が確認 → 正解データ化）
-  improve.py      実際の利用からの改善（feedback の記録、タスクへの取り込み、improve の自動起動とそのモデル・上限、失敗の記録、ログの切り詰め、フッター付きの書き出し）
+  improve.py      実際の利用からの改善（feedback の記録と取り消し（forget）、タスクへの取り込み、improve の自動起動とそのモデル・上限（全体の上限は budget で変更）、失敗の記録、ログの切り詰め、フッター付きの書き出し）
   evaluate.py     任意のスキルでの評価と、対応ありブートストラップ検定
   skills.py       SKILL.md の検証（Agent Skills 仕様）、プロンプトへの埋め込み、提案の適用
   patching.py     append / replace / insert_after の部分編集と差分（wiki とスキルで共用）
@@ -187,6 +191,6 @@ CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼む�
 11. **CLI の障害は採点しない**: 障害を「不正解」として wiki や採否判定に混ぜないためです（[CONFIGURATION.md](CONFIGURATION.md) 4 章）。
 
 論文にない追加機能: 人による採点（ハイブリッド / 毎回）、`script`・`llm_judge` などの採点方法、途中再開、
-`evaluate` / `compare` / `export` コマンド、実際の利用からの改善（`feedback` と `improve`）、例を用意しない始め方（`init --workspace`、`list`）、
+`evaluate` / `compare` / `export` コマンド、実際の利用からの改善（`feedback`・`forget`・`budget` と `improve`）、例を用意しない始め方（`init --workspace`、`list`）、
 train / val / test の自動の振り分け（`splits.py`）、評価を知らせるフック（`judgement_hook.py`）。論文が挙げる限界（スキル検索をしない全文埋め込み、wiki の自動整理がない、
 毎回の改善を必須とする厳しい採否基準など）はこの実装にもそのまま当てはまります。
