@@ -1,5 +1,6 @@
 """The reminder hook (skills/wikiskill/scripts/judgement_hook.py) and its registration by tools/integrate.py."""
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -92,7 +93,8 @@ class RegisterTest(TempDirTest):
         commands = self.hook_commands(settings)
         self.assertEqual(len(commands), 2)
         self.assertEqual(commands[0], "echo mine")
-        self.assertIn(str(claude / "skills" / "wikiskill" / "scripts" / "judgement_hook.py"), commands[1])
+        # integrate resolves the target, so compare resolved paths (Windows temp folders are 8.3 short names)
+        self.assertIn(str((claude / "skills").resolve() / "wikiskill" / "scripts" / "judgement_hook.py"), commands[1])
         self.assertTrue((claude / "settings.json.wikiskill.bak").is_file())
         out = call_hook(commands[1], "良い")  # the registered command really runs
         self.assertIn("additionalContext", out.stdout.decode())
@@ -140,7 +142,8 @@ class RegisterTest(TempDirTest):
         self.assertEqual(self.integrate(claude / "skills", "--skills-dir").returncode, 0)
         self.assertTrue((claude / "settings.json").is_symlink())
         self.assertEqual(len(self.hook_commands(real)), 1)
-        self.assertEqual(real.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":  # Windows keeps only a read-only flag, not POSIX permission bits
+            self.assertEqual(real.stat().st_mode & 0o777, 0o600)
         self.integrate(claude / "skills", "--skills-dir", "--force", "--no-hook")
         hand = '{"model":"opus","hooks":{}}'
         real.write_text(hand, encoding="utf-8")
