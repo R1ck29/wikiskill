@@ -70,6 +70,8 @@ def integrate(target: Path, skills_dir: bool = False, force: bool = False) -> Pa
         shutil.copytree(REPO / "skills" / SKILL_NAME, new, ignore=IGNORE)
         for name in ("wikiskill", "docs", "examples"):
             shutil.copytree(REPO / name, new / name, ignore=IGNORE)
+        for name in ("LICENSE", "NOTICE"):
+            shutil.copy2(REPO / name, new / name)
     except BaseException:
         _remove(new)
         raise

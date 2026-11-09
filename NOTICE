@@ -1,0 +1,23 @@
+Third-party attribution
+
+The MIT License in LICENSE applies to the original code and documentation in
+this repository, except for these two prompt files, which remain under
+Creative Commons Attribution 4.0 International (CC BY 4.0):
+
+- wikiskill/prompts/wiki_maintainer.md: adapted from Appendix E.2
+- wikiskill/prompts/skill_proposer.md: adapted from Appendix E.3
+
+Source: "WikiSkill: Compiling Agent Experience into Persistent Knowledge for
+Skill Evolution"
+Authors: Liyan Tang, Cyrus Rashtchian, Chun-Sung Ferng, Andrew Tomkins,
+Da-Cheng Juan, and Tu Vu
+arXiv:2608.27454
+Paper: https://arxiv.org/abs/2608.27454
+License: https://creativecommons.org/licenses/by/4.0/
+
+The prompt text was adapted (modified) for this implementation, e.g. the
+skill-name rule and line wrapping; the git history of each file shows the
+exact changes.
+
+This is an independent implementation, not affiliated with or endorsed by the
+paper's authors.

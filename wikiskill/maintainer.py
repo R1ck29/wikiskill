@@ -13,12 +13,12 @@ from typing import Any
 
 from .patching import PatchError, apply_edits
 from .scoring import Outcome
-from .util import append_text, extract_json_object, is_windows_reserved, read_text, truncate, write_text
+from .util import append_text, extract_json_object, is_windows_reserved, read_prompt, read_text, truncate, write_text
 from .workspace import Workspace
 
 log = logging.getLogger(__name__)
 
-PROMPT = (Path(__file__).parent / "prompts" / "wiki_maintainer.md").read_text(encoding="utf-8")
+PROMPT = read_prompt(Path(__file__).parent / "prompts" / "wiki_maintainer.md")
 PATTERN_NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\.md")
 MAX_FAIL, MAX_PASS, TRACE_CHARS = 5, 3, 15000  # Appendix C
 

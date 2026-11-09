@@ -60,6 +60,7 @@ class LauncherTest(TempDirTest):
     def test_plugin_version_matches_the_package(self):
         manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["version"], __version__)
+        self.assertEqual(manifest["license"], "MIT")
 
     def test_frontmatter_and_launcher_reference(self):
         text = (SKILL / "SKILL.md").read_text(encoding="utf-8")
@@ -83,9 +84,11 @@ class IntegrateTest(TempDirTest):
         result = self.integrate(self.host)
         self.assertEqual(result.returncode, 0, result.stderr)
         dest = self.host / "skills" / "wikiskill"
-        for path in ("SKILL.md", "scripts/run_wikiskill.py", "wikiskill/__init__.py",
+        for path in ("LICENSE", "NOTICE", "SKILL.md", "scripts/run_wikiskill.py", "wikiskill/__init__.py",
                      "wikiskill/prompts/skill_proposer.md", "docs/SUITE_FORMAT.md", "examples/sales-analysis/suite.json"):
             self.assertTrue((dest / path).is_file(), path)
+        for name in ("LICENSE", "NOTICE"):
+            self.assertEqual((dest / name).read_bytes(), (REPO / name).read_bytes())
         self.assertFalse(list(dest.rglob("__pycache__")))
         moved = self.root / "elsewhere"  # the repository is not needed any more
         shutil.move(str(self.host), str(moved))

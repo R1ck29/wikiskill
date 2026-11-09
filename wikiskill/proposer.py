@@ -17,12 +17,12 @@ from typing import Any
 from .config import Suite, Task
 from .scoring import Outcome
 from .skills import SkillError, apply_proposal, load_skills
-from .util import extract_json_object, read_text, truncate, write_text
+from .util import extract_json_object, read_prompt, read_text, truncate, write_text
 from .workspace import Workspace
 
 log = logging.getLogger(__name__)
 
-PROMPT = (Path(__file__).parent / "prompts" / "skill_proposer.md").read_text(encoding="utf-8")
+PROMPT = read_prompt(Path(__file__).parent / "prompts" / "skill_proposer.md")
 OBSERVATION_CHARS = 15000
 CELL_CHARS = 200
 

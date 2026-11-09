@@ -226,3 +226,10 @@ python -m unittest discover -s tests -t .
 - [docs/SUITE_FORMAT.md](docs/SUITE_FORMAT.md) — 自分の業務のタスクと採点方法の書き方
 - [docs/CONFIGURATION.md](docs/CONFIGURATION.md) — CLI の設定、導入先の環境での注意点と確かめること
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — 仕組み、自動改善の動き、コード構成、論文との対応と差分
+
+## ライセンス
+
+独自に作成したコードとドキュメントは [MIT License](LICENSE) です。
+`wikiskill/prompts/wiki_maintainer.md` と `wikiskill/prompts/skill_proposer.md` は、
+WikiSkill 論文（arXiv:2608.27454）の付録 E.2 / E.3 を改変したもので、CC BY 4.0 が適用されます。
+著者・出典・変更内容は [NOTICE](NOTICE) を参照してください。論文著者とは提携しておらず、推奨・承認を受けた実装ではありません。
