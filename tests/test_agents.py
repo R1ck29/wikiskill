@@ -1,3 +1,4 @@
+import hashlib
 import json
 import tempfile
 import unittest
@@ -140,6 +141,20 @@ class ProposerTest(unittest.TestCase):
         result = run_proposer(backend, self.ws, self.suite, 1, self.tasks, self.outcomes, max_turns=3)
         self.assertEqual(result["action"], "no_action")
         self.assertIn("last turn", backend.prompts[2])
+
+
+class PromptAttributionTest(unittest.TestCase):
+    def test_loaded_prompts_preserve_original_text(self):
+        from wikiskill import maintainer, proposer
+
+        self.assertTrue(maintainer.PROMPT.startswith("You are a Wiki Maintainer Agent"))
+        self.assertNotIn("<!--", maintainer.PROMPT)
+        self.assertEqual(hashlib.sha256(maintainer.PROMPT.encode("utf-8")).hexdigest(),
+                         "f65eca76549fef9f6a93939d6d9b4b20878dd5ea8a3641db001d9719be632077")
+        self.assertTrue(proposer.PROMPT.startswith("You are a Skill Proposer Agent"))
+        self.assertNotIn("<!--", proposer.PROMPT)
+        self.assertEqual(hashlib.sha256(proposer.PROMPT.encode("utf-8")).hexdigest(),
+                         "5c38ad48c48612c535e2d721763dbf454dbf9024b575180099a76e96a3bb30fb")
 
 
 if __name__ == "__main__":

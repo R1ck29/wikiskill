@@ -8,7 +8,7 @@ WikiSkill は、業務の例からエージェント用スキル（SKILL.md）�
 
 既定の入れ先は**利用者のグローバル設定 `~/.claude/skills`**（全プロジェクト共通）です。利用者がプラグインや
 プロジェクトのフォルダをはっきり指定したときだけ、そこに入れます。
-入れるのは `skills/wikiskill/` に本体・docs・examples を同梱した 1 フォルダで、`tools/integrate.py` が作ります。
+入れるのは `skills/wikiskill/` に本体・docs・examples・`LICENSE`・`NOTICE` を同梱した 1 フォルダで、`tools/integrate.py` が作ります。
 **このフォルダのファイルを手で選んでコピーしたり書き換えたりせず**、次の順に進めてください。
 
 1. 入れ先を決める。
@@ -40,7 +40,7 @@ WikiSkill は、業務の例からエージェント用スキル（SKILL.md）�
    （`__pycache__` は含まれず、業務データや育成記録はこの中ではなく `~/wikiskill-work/` に作られる）。
 
 Python が実行できない環境では、`skills/wikiskill/` を入れ先にコピーし、その中へ `wikiskill/`・`docs/`・`examples/` の
-3 フォルダもコピーすれば同じ形になります。
+3 フォルダと、リポジトリ直下の `LICENSE`・`NOTICE` もコピーすれば同じ形になります。
 
 組み込んだ後は、導入先でしか確かめられないこと（認証・ツールの許可・フック・自動の改善）を
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md) 5 章の順で利用者と確かめる。API キーでは実際の料金がかかる（目安と上限は README の「費用と API キー」）。

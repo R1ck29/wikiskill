@@ -58,7 +58,20 @@ WikiSkill が行う呼び出しは 2 種類です。
 |---|---|
 | `--safe-mode`（claude） | 個人の CLAUDE.md・スキル・MCP サーバー・フックを読み込まない（実験の再現性と、トークン消費の削減。認証とモデル選択は通常どおり） |
 | `--disallowedTools WebFetch,WebSearch` / `-c web_search=disabled` | Web 検索を使わせない |
-| `--permission-mode bypassPermissions` / `--sandbox workspace-write` | 無人で実行できるようにする（作業は毎回新しい一時フォルダ内） |
+| `--permission-mode bypassPermissions` / `--sandbox workspace-write` | 無人実行用。新しい一時フォルダは作業ディレクトリであり、WikiSkill のサンドボックスではない。claude の `bypassPermissions` は確認なしでツール・コマンドを実行でき、フォルダ外の読み書きや Bash 経由のネットワーク接続も可能（CLI・OS・組織のポリシーによる制約は別）。codex には CLI 自身の `workspace-write` が適用される。子プロセスは API キーを含む呼び出し元の環境変数を継承する |
+
+### 既定の権限と環境変数について
+
+機能を制限しないため、claude のエージェント実行は意図的に `bypassPermissions` を既定とし、
+CLI の子プロセスは呼び出し元の環境変数（API キーを含む）を継承します。
+この方針は社内利用向けにメンテナがレビューし、受け入れています。自動改善の起動時も環境を引き継ぎ、
+Python の起動用に `PYTHONPATH` と `PYTHONIOENCODING` を設定します。
+
+WikiSkill 自身はネットワーク通信を行わず、モデルへのデータ送信は `claude` / `codex` CLI に設定された
+モデルプロバイダ経由です。ただし、エージェント自身の Bash などからは別のホストへ接続できるため、
+通信先全体をモデルプロバイダだけに限定する仕組みではありません。
+3 章のツールを限定する設定例は、組織のポリシーで必要な場合に使ってください（機能が制限される場合があります）。
+評価や実行には、内容を信頼できるスイートと設定だけを使うことをお勧めします。
 
 ## 3. 設定ファイルで変更する
 
@@ -112,7 +125,7 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
 - **ネットワークドライブ**: スイートとワークスペースはローカルのドライブに置いてください。ファイルロックが使えないドライブでは
   `cannot lock ... keep WikiSkill folders on a local drive` と表示して止まります。
 - **WikiSkill 自身の通信**: ありません（ネットワーク系モジュールを使っていないことを `tests/test_no_network.py` で確認しています）。
-  通信は CLI からモデルへの呼び出しだけです。エージェントがシェル経由で外部に接続できるかどうかは、CLI とネットワークの設定によります。
+  モデルへの通信は CLI 経由です。エージェントがシェル経由で外部に接続できるかどうかは、CLI とネットワークの設定によります。
 - **`--safe-mode` が使えない CLI**: 古い claude では `unknown option` になります。`complete_args` / `agent_args` から外してください。
 - **Windows での自動の改善**: 隠れたコンソールで動くため、ウィンドウは開きません。止めたいときはタスクマネージャーで
   `python` を終了するか、スイートの `improve.json` を消して次から起動しないようにします。

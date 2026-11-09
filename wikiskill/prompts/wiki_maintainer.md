@@ -1,3 +1,13 @@
+<!--
+Adapted from Appendix E.2 of "WikiSkill: Compiling Agent Experience into
+Persistent Knowledge for Skill Evolution" by Liyan Tang, Cyrus Rashtchian,
+Chun-Sung Ferng, Andrew Tomkins, Da-Cheng Juan, and Tu Vu, arXiv:2608.27454.
+https://arxiv.org/abs/2608.27454 — CC BY 4.0:
+https://creativecommons.org/licenses/by/4.0/
+Modified for this implementation (e.g. the skill-name rule and line wrapping);
+see the git history of this file for the exact changes.
+Independent implementation; not affiliated with or endorsed by the paper's authors.
+-->
 You are a Wiki Maintainer Agent for an LLM skill evolution system.
 Your job is to maintain a structured knowledge base (wiki) that documents patterns
 observed during agent execution -- both successes and failures. You must perform DEEP

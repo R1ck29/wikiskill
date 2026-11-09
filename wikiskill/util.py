@@ -49,6 +49,11 @@ def read_text(path: Path) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def read_prompt(path: Path) -> str:
+    """Read a prompt, excluding a leading attribution comment and its line breaks."""
+    return re.sub(r"\A<!--.*?-->[\r\n]*", "", read_text(path), count=1, flags=re.DOTALL)
+
+
 def write_text(path: Path, text: str) -> None:
     """Write UTF-8 text atomically (temp file + rename), creating parent dirs."""
     path = Path(path)

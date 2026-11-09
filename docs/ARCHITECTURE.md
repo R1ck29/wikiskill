@@ -144,7 +144,7 @@ skills/wikiskill/scripts/run_wikiskill.py      起動スクリプト。スキル
 skills/wikiskill/scripts/judgement_hook.py     UserPromptSubmit フック。評価らしい発言のときだけ「評価なら B に従って記録」という注意を
                                                Claude に渡す（判断は Claude。エラーでも発言は止めない。パッケージを読み込まないので速い）
 hooks/hooks.json                               プラグインとして入れたときの同じフック
-tools/integrate.py                             グローバル設定・プラグイン・プロジェクトへ、パッケージ・docs・examples を同梱した
+tools/integrate.py                             グローバル設定・プラグイン・プロジェクトへ、パッケージ・docs・examples・LICENSE・NOTICE を同梱した
                                                自己完結のスキルフォルダをコピー（全体を作ってから入れ替えるので、失敗しても前の版が残る）し、
                                                上のフックを設定ファイルに登録する（`--no-hook` で外す）
 CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼むときの手順と、利用者が貼り付ける文章
