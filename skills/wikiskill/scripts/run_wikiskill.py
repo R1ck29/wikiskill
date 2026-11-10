@@ -2,7 +2,8 @@
 
 The `wikiskill` package is looked up first inside the skill folder (a copy made by
 tools/integrate.py) and then in each parent folder (the repository / plugin root).
-If this Python is older than 3.10, the newest `python3.X` on PATH runs the command instead.
+If this Python is older than 3.10, the newest `python3.X` on PATH runs the command instead;
+without one it stops with a message saying how to get a newer Python.
 """
 import os
 import shutil
@@ -36,6 +37,11 @@ def main() -> int:
             env = dict(os.environ, WIKISKILL_REEXEC="1")
             command = [exe, str(Path(__file__).resolve()), *sys.argv[1:]]
             return subprocess.run(command, env=env, check=False).returncode
+    if sys.version_info < (3, 10):
+        print("error: wikiskill needs Python 3.10 or newer (this is {}.{}), and no python3.10 or newer was found"
+              " on PATH. Install one (python.org, or `brew install python` on macOS) and try again."
+              .format(*sys.version_info[:2]), file=sys.stderr)
+        return 2
     skill_dir = Path(__file__).resolve().parent.parent
     root = find_package_root(skill_dir)
     if root is None:

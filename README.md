@@ -41,6 +41,7 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 ## 入れ方
 
 どの方法でも、Python 3.10 以上と `claude`（または `codex`）コマンドが必要です（ターミナルで `claude -p "hello"` が返答すれば OK）。
+macOS 標準の `python3`（Xcode Command Line Tools）は 3.9 のことがあるので、`python3 --version` で確かめ、古ければ python.org か `brew install python` で新しい Python を入れてください。
 入れたあとは Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、Claude が下のコマンドを代わりに実行します。
 利用者の作業は**例のフォルダを伝えるか、普段の作業結果を「良い」「違う」と評価する（または直しを指示する）ことだけ**で、正解が無い業務は Claude が採点基準を書いて自動採点し、
 育ったスキルは `~/.claude/skills` に書き出されて全プロジェクトで使えるようになります。
