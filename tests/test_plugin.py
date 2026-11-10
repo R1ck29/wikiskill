@@ -54,6 +54,8 @@ class LauncherTest(TempDirTest):
         found = {"python3.10": "/x/python3.10", "python3.12": "/x/python3.12"}
         with mock.patch("shutil.which", found.get):
             self.assertEqual(run_wikiskill.newer_python(), "/x/python3.12")
+        with mock.patch("shutil.which", {"python3.9": "/x/python3.9"}.get):  # below the supported minimum
+            self.assertIsNone(run_wikiskill.newer_python())
         with mock.patch("shutil.which", lambda name: None):
             self.assertIsNone(run_wikiskill.newer_python())
 

@@ -13,9 +13,10 @@ import io
 import math
 import re
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 from .config import Suite, Task
 from .util import csv_cell, csv_value, extract_json_object, truncate

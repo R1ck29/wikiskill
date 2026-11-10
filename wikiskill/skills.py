@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import re
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from .patching import PatchError, apply_edits, unified_diff
 from .util import is_windows_reserved, read_text, write_text

@@ -140,7 +140,7 @@ wikiskill/
 .claude-plugin/plugin.json, marketplace.json   リポジトリ全体を 1 つのプラグイン兼マーケットプレイスにする
 skills/wikiskill/SKILL.md                      Claude が CLI を代わりに実行するための手順書（呼び出し時だけ読み込まれる）
 skills/wikiskill/scripts/run_wikiskill.py      起動スクリプト。スキルフォルダ内 → 親フォルダの順に wikiskill パッケージを探し、
-                                               Python が 3.9 未満なら PATH 上の新しい python3.X で実行し直す
+                                               Python が 3.10 未満なら PATH 上の新しい python3.X で実行し直す
 skills/wikiskill/scripts/judgement_hook.py     UserPromptSubmit フック。評価らしい発言のときだけ「評価なら B に従って記録」という注意を
                                                Claude に渡す（判断は Claude。エラーでも発言は止めない。パッケージを読み込まないので速い）
 hooks/hooks.json                               プラグインとして入れたときの同じフック
