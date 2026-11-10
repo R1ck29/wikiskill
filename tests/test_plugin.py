@@ -54,8 +54,22 @@ class LauncherTest(TempDirTest):
         found = {"python3.10": "/x/python3.10", "python3.12": "/x/python3.12"}
         with mock.patch("shutil.which", found.get):
             self.assertEqual(run_wikiskill.newer_python(), "/x/python3.12")
+        with mock.patch("shutil.which", {"python3.9": "/x/python3.9"}.get):  # below the supported minimum
+            self.assertIsNone(run_wikiskill.newer_python())
         with mock.patch("shutil.which", lambda name: None):
             self.assertIsNone(run_wikiskill.newer_python())
+
+    def test_old_python_without_a_newer_one_stops_with_a_message(self):
+        sys.path.insert(0, str(LAUNCHER.parent))
+        self.addCleanup(sys.path.remove, str(LAUNCHER.parent))
+        import run_wikiskill
+        with mock.patch.object(run_wikiskill.sys, "version_info", (3, 9, 6)), \
+                mock.patch.object(run_wikiskill, "newer_python", lambda: None), \
+                mock.patch.object(run_wikiskill, "find_package_root") as find, \
+                mock.patch("sys.stderr") as err:
+            self.assertEqual(run_wikiskill.main(), 2)
+        find.assert_not_called()
+        self.assertIn("Python 3.10 or newer", "".join(c.args[0] for c in err.write.call_args_list))
 
     def test_plugin_version_matches_the_package(self):
         manifest = json.loads((REPO / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))

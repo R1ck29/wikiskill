@@ -7,7 +7,7 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 [WikiSkill: Compiling Agent Experience into Persistent Knowledge for Skill Evolution (arXiv:2608.27454)](https://arxiv.org/abs/2608.27454)
 の手法を、論文本文・Algorithm 1・付録のプロンプトに基づいて実装しています（論文にはコードへのリンクがないため独自実装です）。
 
-- **Python 3.9 以上の標準ライブラリだけ**で動きます（`pip install` 不要）。Windows / macOS / Linux 対応。
+- **Python 3.10 以上の標準ライブラリだけ**で動きます（`pip install` 不要）。Windows / macOS / Linux 対応。
 - モデルは手元の **`claude`（または `codex`）コマンド経由でのみ**呼びます。WikiSkill 自身はネットワークに接続しないので、
   CLI が API キー・Bedrock・LLM ゲートウェイのどれで認証していても、そのまま使えます。
 - 育ったスキルは Claude Code や Codex のスキルとしてそのまま使えます。
@@ -40,7 +40,8 @@ AI エージェント（Claude Code / Codex）に同じ種類の業務タスク�
 
 ## 入れ方
 
-どの方法でも、Python 3.9 以上と `claude`（または `codex`）コマンドが必要です（ターミナルで `claude -p "hello"` が返答すれば OK）。
+どの方法でも、Python 3.10 以上と `claude`（または `codex`）コマンドが必要です（ターミナルで `claude -p "hello"` が返答すれば OK）。
+macOS 標準の `python3`（Xcode Command Line Tools）は 3.9 のことがあるので、`python3 --version` で確かめ、古ければ python.org か `brew install python` で新しい Python を入れてください。
 入れたあとは Claude に「この業務を覚えさせて」「育成の進み具合は？」と話しかけるだけで、Claude が下のコマンドを代わりに実行します。
 利用者の作業は**例のフォルダを伝えるか、普段の作業結果を「良い」「違う」と評価する（または直しを指示する）ことだけ**で、正解が無い業務は Claude が採点基準を書いて自動採点し、
 育ったスキルは `~/.claude/skills` に書き出されて全プロジェクトで使えるようになります。
@@ -222,7 +223,7 @@ workspaces/sales/
 python -m unittest discover -s tests -t .
 ```
 
-モデルを呼ばずに（偽の CLI で）全機能を確認します。GitHub Actions で Windows / macOS / Linux × Python 3.9 / 3.13 を実行しています。
+モデルを呼ばずに（偽の CLI で）全機能を確認します。GitHub Actions で Windows / macOS / Linux × Python 3.10 / 3.13 を実行しています。
 
 ## ドキュメント
 

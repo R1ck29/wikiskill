@@ -2,7 +2,8 @@
 
 The `wikiskill` package is looked up first inside the skill folder (a copy made by
 tools/integrate.py) and then in each parent folder (the repository / plugin root).
-If this Python is older than 3.9, the newest `python3.X` on PATH runs the command instead.
+If this Python is older than 3.10, the newest `python3.X` on PATH runs the command instead;
+without one it stops with a message saying how to get a newer Python.
 """
 import os
 import shutil
@@ -21,8 +22,8 @@ def find_package_root(start: Path) -> Optional[Path]:
 
 
 def newer_python() -> Optional[str]:
-    """Path of the newest `python3.X` (X >= 9) on PATH, or None."""
-    for minor in range(30, 8, -1):
+    """Path of the newest `python3.X` (X >= 10) on PATH, or None."""
+    for minor in range(30, 9, -1):
         exe = shutil.which(f"python3.{minor}")
         if exe:
             return exe
@@ -30,12 +31,17 @@ def newer_python() -> Optional[str]:
 
 
 def main() -> int:
-    if sys.version_info < (3, 9) and not os.environ.get("WIKISKILL_REEXEC"):
+    if sys.version_info < (3, 10) and not os.environ.get("WIKISKILL_REEXEC"):
         exe = newer_python()
         if exe:
             env = dict(os.environ, WIKISKILL_REEXEC="1")
             command = [exe, str(Path(__file__).resolve()), *sys.argv[1:]]
             return subprocess.run(command, env=env, check=False).returncode
+    if sys.version_info < (3, 10):
+        print("error: wikiskill needs Python 3.10 or newer (this is {}.{}), and no python3.10 or newer was found"
+              " on PATH. Install one (python.org, or `brew install python` on macOS) and try again."
+              .format(*sys.version_info[:2]), file=sys.stderr)
+        return 2
     skill_dir = Path(__file__).resolve().parent.parent
     root = find_package_root(skill_dir)
     if root is None:

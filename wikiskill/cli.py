@@ -276,8 +276,8 @@ def _suite(args: argparse.Namespace, require_answers: bool = True, allow_empty: 
 # ----- commands --------------------------------------------------------------------
 def cmd_check(args: argparse.Namespace) -> int:
     print(f"wikiskill {__version__} on Python {platform.python_version()} ({platform.system()})")
-    if sys.version_info < (3, 9):  # noqa: UP036 -- a clear message for users who start an old Python
-        print("error: Python 3.9 or newer is required", file=sys.stderr)
+    if sys.version_info < (3, 10):  # noqa: UP036 -- a clear message for users who start an old Python
+        print("error: Python 3.10 or newer is required", file=sys.stderr)
         return EXIT_CONFIG
     if args.suite:
         suite = load_suite(args.suite, require_answers=False, allow_empty=True)

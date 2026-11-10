@@ -1,6 +1,6 @@
 # このフォルダで作業するエージェントへ
 
-WikiSkill は、業務の例からエージェント用スキル（SKILL.md）を自動で育てるツールです。Python 3.9 以上の標準ライブラリだけで動き、
+WikiSkill は、業務の例からエージェント用スキル（SKILL.md）を自動で育てるツールです。Python 3.10 以上の標準ライブラリだけで動き、
 モデルは `claude`（または `codex`）コマンド経由でだけ呼びます。仕組みは [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)、
 使い方は [README.md](README.md) にあります。
 
@@ -48,6 +48,6 @@ Python が実行できない環境では、`skills/wikiskill/` を入れ先に�
 ## このリポジトリを開発するとき
 
 - テスト（モデルを呼ばない）: `python3 -m unittest discover -s tests -t .`。Lint: `ruff check .`（CI は ruff 0.17.1）
-- `wikiskill/` は Python 3.9・標準ライブラリだけで動く書き方にする。`skills/wikiskill/scripts/run_wikiskill.py` は古い Python でも起動できる書き方を保つ。
+- `wikiskill/` は Python 3.10・標準ライブラリだけで動く書き方にする。`skills/wikiskill/scripts/run_wikiskill.py` は古い Python でも起動できる書き方を保つ。
 - 版を上げるときは `wikiskill/__init__.py` と `.claude-plugin/plugin.json` の `version` を揃える（テストが確認する）。
 - 動作を変えたら README・docs・`skills/wikiskill/SKILL.md` の該当箇所も同じコミットで直す。同じ説明を複数の場所に書かず、詳しい説明は 1 か所に置いてリンクする。
