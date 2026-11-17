@@ -438,6 +438,10 @@ v1 のまま。足すのは `wiki/archive/`・`wiki/lint.json` と `spend.json` 
 3. **`check` の追加表示**: `credential_expires_at` が 10 日以内なら警告。codex の利用量（`turn.completed.usage`）を台帳の `tokens_in` / `tokens_out` に足す。
    実機確認が要るもの: ログイン済みの claude 2.1.325 と codex 0.169.0 で `check` が最後まで通ること（この PR の環境では確かめられていない。4 章）。
 
+4. **並列実行時の 1 回ごとの上限の配分**: 第 0 段階の `--max-budget-usd` は各呼び出しに「今日の残り」をそのまま渡すので、
+   並列数 `workers` の分だけ、最悪で残りの `workers` 倍まで使いうる（0.11.0 は上限なし）。`Budget` に `reserve(usd) -> float` を足し、
+   呼び出しの前に「残り ÷ 実行中の呼び出し数」を予約して、終わったら実際の費用で精算する。テスト: 4 並列で残り 1 ドルのとき、各呼び出しの上限の合計が 1 ドル以下。
+
 ### 第 2 段階: wiki の lint と決定的な圧縮（6.5 節 (a)(b)）
 
 - 新規 `wikiskill/wiki_lint.py`: `lint(ws: Workspace, iteration: int) -> list[Issue]`、`compact(ws: Workspace, iteration: int, keep_impact: int = 6, keep_logs: int = 12) -> list[Path]`、
