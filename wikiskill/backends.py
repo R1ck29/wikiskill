@@ -17,6 +17,9 @@ flags appear on the command line (Windows limits command lines to 32k chars and
 
 A `Budget` caps what one day of budgeted (automatic) runs may spend, measured from the
 cost each CLI call reports.
+
+What the command lines look like and what their output means lives in `agent_cli`; this module
+runs the processes and owns the policy: config files, retries, budgets, which failures stop a run.
 """
 from __future__ import annotations
 
@@ -36,50 +39,71 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import agent_cli
+from .agent_cli import CallSpec, CliInfo
 from .config import ConfigError
 from .util import locked, read_json, write_json
 
 log = logging.getLogger(__name__)
 
-# Defaults verified with claude 2.1.295 and codex-cli 0.146.1. Override them with
-# a backend config file (see docs/CONFIGURATION.md) if your CLI version differs.
+# The arguments of a CLI whose version is not known: the ones verified with claude 2.1.295 and
+# codex-cli 0.146.1. Once the version is known (CLIBackend.detect) agent_cli adapts them to it.
+# A backend config file replaces them and switches the adapting off (see docs/CONFIGURATION.md).
 DEFAULTS: dict[str, dict[str, object]] = {
-    "claude": {
-        "command": "claude",
-        "model_flag": "--model",
-        "complete_args": ["-p", "--safe-mode", "--output-format", "json", "--tools", "",
-                          "--no-session-persistence"],
-        "agent_args": ["-p", "--safe-mode", "--output-format", "stream-json", "--verbose",
-                       "--permission-mode", "bypassPermissions",
-                       "--disallowedTools", "WebFetch,WebSearch", "--no-session-persistence"],
-    },
-    "codex": {
-        "command": "codex",
-        "model_flag": "-m",
-        "complete_args": ["exec", "--json", "--skip-git-repo-check", "--ephemeral",
-                          "--sandbox", "read-only", "-c", "web_search=disabled"],
-        "agent_args": ["exec", "--json", "--skip-git-repo-check", "--ephemeral",
-                       "--sandbox", "workspace-write", "-c", "web_search=disabled"],
-    },
+    kind: {"command": kind, "model_flag": model_flag,
+           **{f"{mode}_args": list(agent_cli.base_args(kind, mode)) for mode in agent_cli.MODES}}
+    for kind, model_flag in (("claude", "--model"), ("codex", "-m"))
 }
+VERSION_TIMEOUT = 15  # seconds `<command> --version` may take
 
 
 _MODEL_RE = re.compile(r"\w[\w.:/@+-]*")  # Anthropic, OpenAI and Bedrock ids / ARNs (never a flag)
 _LIVE: set = set()  # running CLI processes, so Ctrl+C in the main thread can stop worker-thread runs
 _LIVE_LOCK = threading.Lock()
 _STOP = threading.Event()  # set on Ctrl+C: no new CLI starts and no retries until reset_stop()
+# what to do about a failure that stops the run ({cli} is the command)
+_ADVICE = {
+    "auth": "make `{cli}` work on its own (log in or set the API key), then run the same command again",
+    "billing": "the account behind `{cli}` cannot be charged; fix that, then run the same command again",
+    "bad_option": "this `{cli}` version does not take these arguments; set the ones it takes in a backend "
+                  "config (docs/CONFIGURATION.md, section 3)",
+    "bad_model": "choose a model this `{cli}` can use with --model",
+}
 
 
 class BackendError(RuntimeError):
-    """The CLI could not be run or returned no usable answer."""
+    """The CLI could not be run or returned no usable answer.
+
+    `kind` is one of agent_cli.errors: it says whether trying again can help (`retryable`) and whether
+    the whole run must stop because every further call would fail the same way (`fatal`).
+    """
+
+    def __init__(self, message: str, kind: str = "unknown") -> None:
+        super().__init__(message)
+        self.kind = kind
+
+    @property
+    def retryable(self) -> bool:
+        return self.kind in agent_cli.RETRYABLE
+
+    @property
+    def fatal(self) -> bool:
+        return self.kind in agent_cli.FATAL
 
 
 class StoppedError(BackendError):
     """The run was stopped by the user (Ctrl+C); never retried."""
 
+    def __init__(self, message: str) -> None:
+        super().__init__(message, kind="stopped")
+
 
 class BudgetExceeded(RuntimeError):
     """Today's budget is spent: the run stops (not retried, nothing scored) and resumes from its saved stage."""
+
+
+class UsageLimitReached(BudgetExceeded):
+    """The CLI's own usage limit is reached: the run stops like a spent budget and resumes after the reset."""
 
 
 class Budget:
@@ -132,6 +156,10 @@ class Budget:
             if day["usd"] >= budget.limit:
                 raise BudgetExceeded(budget._spent(day))
 
+    def remaining(self) -> float:
+        """USD left today before the nearest limit (this budget's or the shared one's); never below 0."""
+        return max(0.0, min(budget.limit - budget.today()["usd"] for budget in self._chain()))
+
     def _spent(self, day: dict[str, Any]) -> str:
         return f"{self.label} of ${self.limit:.2f} is spent (${day['usd']:.2f})"
 
@@ -178,6 +206,8 @@ class BackendConfig:
     timeout: int = 1800
     retries: int = 2
     retry_wait: float = 10.0
+    # the modes ("complete", "agent") whose arguments a config file wrote: used as written, never adapted
+    pinned: frozenset[str] = frozenset()
 
 
 def load_backend_config(kind: str, model: str | None = None,
@@ -188,10 +218,11 @@ def load_backend_config(kind: str, model: str | None = None,
     values = dict(DEFAULTS[kind])
     if config_path:
         overrides = read_json(Path(config_path)).get(kind, {})
-        unknown = set(overrides) - set(BackendConfig.__dataclass_fields__)
+        unknown = set(overrides) - (set(BackendConfig.__dataclass_fields__) - {"pinned"})
         if unknown:
             raise ConfigError(f"unknown keys in backend config: {sorted(unknown)}")
         values.update(overrides)
+        values["pinned"] = frozenset(mode for mode in agent_cli.MODES if f"{mode}_args" in overrides)
     for key in ("complete_args", "agent_args"):
         values[key] = tuple(str(a) for a in values[key])
     values["kind"] = kind
@@ -210,6 +241,8 @@ class CLIBackend:
     def __init__(self, config: BackendConfig, budget: Budget | None = None) -> None:
         self.config = config
         self.budget = budget
+        self.cli: CliInfo = agent_cli.unknown(config.kind)  # the version, once detect() has looked
+        self._detected = False
 
     @property
     def name(self) -> str:
@@ -217,70 +250,163 @@ class CLIBackend:
 
     def complete(self, prompt: str, system: str | None = None) -> str:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
-            args, stdin = self._complete_args(prompt, system, Path(tmp))
-            return self._retry(lambda: self._call(args, stdin, Path(tmp), self._parse_complete))
+            return self._retry(lambda: self._call("complete", prompt, system, Path(tmp), Path(tmp))).text
 
     def run_agent(self, prompt: str, system: str | None, cwd: Path) -> AgentResult:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
-            args, stdin = self._agent_args(prompt, system, Path(cwd), Path(tmp))
             try:
-                return self._retry(lambda: self._call(args, stdin, Path(cwd), self._parse_agent))
+                outcome = self._retry(lambda: self._call("agent", prompt, system, Path(cwd), Path(tmp)))
             except BackendError as e:
+                if e.fatal:  # every other task would fail the same way: stop the run, do not score an outage
+                    raise
                 return AgentResult("", f"(agent run failed: {e})", ok=False, error=str(e), infra_error=True)
+            return AgentResult(outcome.text, outcome.trace, ok=True)
 
-    def _call(self, args: list[str], stdin: str, cwd: Path, parse: Callable):
+    # ----- version and arguments ---------------------------------------------------
+    def detect(self) -> CliInfo:
+        """Ask the CLI for its version (`--version`, once) so the arguments fit it; unknown when that fails."""
+        exe = shutil.which(self.config.command)
+        if self._detected or not exe:
+            return self.cli
+        try:
+            _, stdout, stderr = run_process([exe, *agent_cli.VERSION_ARGS], "", Path(tempfile.gettempdir()),
+                                            VERSION_TIMEOUT)
+        except StoppedError:
+            raise
+        except (BackendError, OSError) as e:
+            stdout, stderr = "", str(e)
+        self.cli = agent_cli.parse_version(self.config.kind, stdout or stderr)
+        self._detected = True
+        log.debug("%s is %s", self.config.command, self.cli.label())
+        return self.cli
+
+    def base_args(self, mode: str) -> tuple[str, ...]:
+        """The fixed arguments of a call: the config file's as written, else the ones for this CLI version."""
+        if mode in self.config.pinned:
+            return getattr(self.config, f"{mode}_args")
+        return agent_cli.base_args(self.config.kind, mode, self.cli)
+
+    def describe(self) -> list[str]:
+        """Lines for `check`: the version found and how the arguments of each call are chosen."""
+        lines = [f"version: {self.cli.label()}"]
+        if self.cli.version is None and not self.config.pinned:
+            lines.append(f"  the version could not be read: using the arguments verified with "
+                         f"{self.config.kind} {agent_cli.VERIFIED[self.config.kind]}")
+        for mode in agent_cli.MODES:
+            source = ("set by the backend config, used as written" if mode in self.config.pinned
+                      else "chosen for this version")
+            shown = " ".join(arg or '""' for arg in self.base_args(mode))
+            lines.append(f"{mode} arguments ({source}): {shown}")
+        return lines
+
+    def _args(self, mode: str, prompt: str, system: str | None, cwd: Path, tmp: Path) -> tuple[list[str], str]:
+        """The command line and the stdin text of one call."""
+        kind = self.config.kind
+        system_file = _write_prompt_file(tmp, "system.md", system) if system and kind == "claude" else None
+        # one call may not spend more than what is left of today's budget (config-file arguments stay as written)
+        cap = self.budget.remaining() if self.budget and mode not in self.config.pinned else None
+        spec = CallSpec(mode, self.config.model, system_file, str(cwd), cap)
+        args = agent_cli.call_args(kind, self.base_args(mode), spec, self.cli, self.config.model_flag)
+        return args, agent_cli.join_prompt(kind, system, prompt)
+
+    def _call(self, mode: str, prompt: str, system: str | None, cwd: Path, tmp: Path) -> agent_cli.Outcome:
         if self.budget:
             self.budget.check()
-        stdout = self._run(args, stdin, cwd)
-        cost = self._cost(stdout)
-        # calls that fail with output cost too; a cut-off call of a CLI that reports costs adds nothing
-        if self.budget and (cost is not None or not self.reports_cost):
+        args, stdin = self._args(mode, prompt, system, cwd, tmp)
+        outcome = agent_cli.parse_output(self.config.kind, mode, self._run(args, stdin, cwd))
+        self._charge(outcome)
+        if outcome.error:
+            self._fail(outcome.error)
+        return outcome
+
+    def _charge(self, outcome: agent_cli.Outcome) -> None:
+        """Add the call to today's ledger. Calls that fail with output cost too; a cut-off call adds nothing,
+        and neither does a call the CLI refused before the model did any work (a usage limit, a bad login)."""
+        if not self.budget:
+            return
+        cost = outcome.usage.cost_usd if outcome.usage else None
+        if cost is not None:
             self.budget.add(cost)
-        return parse(stdout)
+        elif not self.reports_cost and not (outcome.error and outcome.error.fatal):
+            self.budget.add(None)
+
+    def _fail(self, error: agent_cli.CallError) -> None:
+        """Raise the exception for a failure the CLI reported in its output."""
+        cli, message = self.config.command, f"{self.config.kind} error: {error.message}"
+        if error.kind == "usage_limit":
+            raise UsageLimitReached(f"the usage limit of `{cli}` is reached ({error.message})")
+        if error.kind == "cost_cap":
+            raise BudgetExceeded(f"one call used up what was left of {self.budget.label if self.budget else 'the budget'}")
+        raise BackendError(_with_advice(message, error.kind, cli), error.kind)
 
     # ----- subprocess ----------------------------------------------------------
     def _run(self, args: list[str], stdin: str, cwd: Path) -> str:
         exe = shutil.which(self.config.command)
         if not exe:
-            raise BackendError(f"command {self.config.command!r} not found on PATH")
+            raise BackendError(f"command {self.config.command!r} not found on PATH", "not_found")
         returncode, stdout, stderr = run_process([exe, *args], stdin, cwd, self.config.timeout)
         if returncode is None:
-            raise BackendError(f"{self.config.command} timed out after {self.config.timeout}s")
+            raise BackendError(f"{self.config.command} timed out after {self.config.timeout}s", "timeout")
         if returncode != 0 and not stdout.strip():
-            raise BackendError(f"{self.config.command} exited {returncode}: {stderr.strip()[-2000:]}")
+            error = agent_cli.classify_exit(returncode, stderr)
+            message = f"{self.config.command} exited {returncode}: {error.message}"
+            if error.kind == "usage_limit":
+                raise UsageLimitReached(f"the usage limit of `{self.config.command}` is reached ({error.message})")
+            raise BackendError(message, error.kind)
         return stdout
 
     def _retry(self, call: Callable):
         attempts = self.config.retries + 1
-        for attempt in range(1, attempts + 1):
+        attempt = 1
+        while True:
             try:
                 return call()
             except BackendError as e:
+                if e.kind == "bad_option" and self._adapt():
+                    log.warning("%s rejected an argument (%s); trying again with the arguments for %s",
+                                self.config.command, e, self.cli.label())
+                    continue  # not counted as an attempt: the arguments changed, and this happens once
+                if not e.retryable:  # waiting does not help: a login, a model name, a missing command
+                    raise BackendError(_with_advice(str(e), e.kind, self.config.command), e.kind) from e
                 if attempt == attempts or _STOP.is_set():
                     raise
                 log.warning("%s call failed (attempt %d/%d): %s", self.name, attempt, attempts, e)
                 if _STOP.wait(self.config.retry_wait * attempt):  # wakes early on Ctrl+C
                     raise StoppedError("stopped by the user") from e
+                attempt += 1
 
-    def _model_args(self) -> list[str]:
-        return [self.config.model_flag, self.config.model] if self.config.model else []
+    def _adapt(self) -> bool:
+        """After the CLI rejected an argument: look up its version if nobody did; True when that changes
+        the arguments of a call (a library user who never called detect() gets the right ones this way)."""
+        if self._detected:
+            return False
+        before = [self.base_args(mode) for mode in agent_cli.MODES]
+        self.detect()
+        return before != [self.base_args(mode) for mode in agent_cli.MODES]
 
-    # ----- implemented by subclasses ---------------------------------------------------
-    def _complete_args(self, prompt: str, system: str | None, tmp: Path) -> tuple[list[str], str]:
-        raise NotImplementedError
-
-    def _agent_args(self, prompt: str, system: str | None, cwd: Path, tmp: Path) -> tuple[list[str], str]:
-        raise NotImplementedError
-
+    # ----- kept for callers of 0.11.0 --------------------------------------------------
     def _parse_complete(self, stdout: str) -> str:
-        raise NotImplementedError
+        return self._parsed("complete", stdout).text
 
     def _parse_agent(self, stdout: str) -> AgentResult:
-        raise NotImplementedError
+        outcome = self._parsed("agent", stdout)
+        return AgentResult(outcome.text, outcome.trace, ok=True)
+
+    def _parsed(self, mode: str, stdout: str) -> agent_cli.Outcome:
+        outcome = agent_cli.parse_output(self.config.kind, mode, stdout)
+        if outcome.error:
+            self._fail(outcome.error)
+        return outcome
 
     def _cost(self, stdout: str) -> float | None:
         """USD the call reports, or None when the CLI reports no cost."""
-        return None
+        usage = agent_cli.parse_output(self.config.kind, "agent", stdout).usage
+        return usage.cost_usd if usage else None
+
+
+def _with_advice(message: str, kind: str, command: str) -> str:
+    advice = _ADVICE.get(kind, "").format(cli=command)
+    return f"{message}; {advice}" if advice and advice not in message else message
 
 
 def run_process(argv: list[str], stdin: str, cwd: Path, timeout: float) -> tuple[int | None, str, str]:
@@ -349,139 +475,14 @@ def _write_prompt_file(tmp: Path, name: str, text: str) -> str:
     return str(path)
 
 
-def _json_lines(stdout: str) -> list[dict]:
-    events = []
-    for raw in stdout.splitlines():
-        line = raw.strip()
-        if line.startswith("{"):
-            try:
-                events.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return events
-
-
-def _block(text: str) -> str:
-    fence = "````" if "```" in text else "```"
-    return f"{fence}\n{text.rstrip()}\n{fence}"
-
-
 class ClaudeBackend(CLIBackend):
     """`claude -p`: system prompts via --system-prompt-file / --append-system-prompt-file."""
 
     reports_cost = True
 
-    def _complete_args(self, prompt, system, tmp):
-        args = [*self.config.complete_args, *self._model_args()]
-        if system:
-            args += ["--system-prompt-file", _write_prompt_file(tmp, "system.md", system)]
-        return args, prompt
-
-    def _agent_args(self, prompt, system, cwd, tmp):
-        args = [*self.config.agent_args, *self._model_args()]
-        if system:  # keep Claude Code's own agent prompt, append the task prompt + skills
-            args += ["--append-system-prompt-file", _write_prompt_file(tmp, "system.md", system)]
-        return args, prompt
-
-    def _cost(self, stdout):
-        try:  # `--output-format json` prints one object, stream-json one event per line
-            events = [json.loads(stdout)]
-        except json.JSONDecodeError:
-            events = _json_lines(stdout)
-        result = next((e for e in reversed(events) if isinstance(e, dict) and e.get("type") == "result"), None)
-        cost = (result or {}).get("total_cost_usd")
-        return float(cost) if isinstance(cost, (int, float)) and not isinstance(cost, bool) else None
-
-    def _parse_complete(self, stdout):
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError:
-            raise BackendError(f"claude returned non-JSON output: {stdout[:300]!r}") from None
-        if data.get("is_error") or not isinstance(data.get("result"), str):
-            raise BackendError(f"claude error: {str(data.get('result'))[:500]}")
-        return data["result"]
-
-    def _parse_agent(self, stdout):
-        events = _json_lines(stdout)
-        result = next((e for e in reversed(events) if e.get("type") == "result"), None)
-        if result is None:
-            raise BackendError("claude stream ended without a result event")
-        if result.get("is_error"):  # API / quota / auth failures: retry, never score
-            raise BackendError(f"claude error: {str(result.get('result'))[:500]}")
-        trace = "\n\n".join(filter(None, (_render_claude_event(e) for e in events)))
-        return AgentResult(str(result.get("result", "")), trace, ok=True)
-
-
-def _render_claude_event(event: dict) -> str:
-    kind = event.get("type")
-    if kind not in ("assistant", "user"):
-        return ""
-    content = event.get("message", {}).get("content")
-    if not isinstance(content, list):
-        return f"**{kind}:** {content}" if content else ""
-    parts = []
-    for block in content:
-        btype = block.get("type")
-        if btype == "text" and block.get("text", "").strip():
-            parts.append(f"**{kind}:** {block['text'].strip()}")
-        elif btype == "thinking" and block.get("thinking", "").strip():
-            parts.append(f"**reasoning:** {block['thinking'].strip()}")
-        elif btype == "tool_use":
-            payload = json.dumps(block.get("input", {}), ensure_ascii=False, indent=1)
-            parts.append(f"**tool call `{block.get('name')}`:**\n{_block(payload)}")
-        elif btype == "tool_result":
-            out = block.get("content")
-            if isinstance(out, list):
-                out = "\n".join(str(c.get("text", c)) for c in out if isinstance(c, dict))
-            label = "tool error" if block.get("is_error") else "tool output"
-            parts.append(f"**{label}:**\n{_block(str(out))}")
-    return "\n\n".join(parts)
-
 
 class CodexBackend(CLIBackend):
     """`codex exec`: Codex has no system-prompt flag, so the system text leads the stdin prompt."""
-
-    def _complete_args(self, prompt, system, tmp):
-        return [*self.config.complete_args, *self._model_args(), "-C", str(tmp), "-"], _join(system, prompt)
-
-    def _agent_args(self, prompt, system, cwd, tmp):
-        return [*self.config.agent_args, *self._model_args(), "-C", str(cwd), "-"], _join(system, prompt)
-
-    def _parse_complete(self, stdout):
-        return self._parse_agent(stdout).final_text
-
-    def _parse_agent(self, stdout):
-        events = _json_lines(stdout)
-        if not events:
-            raise BackendError(f"codex returned no JSON events: {stdout[:300]!r}")
-        failed = next((e for e in events if e.get("type") == "turn.failed"), None)
-        items = [e["item"] for e in events if e.get("type") == "item.completed" and isinstance(e.get("item"), dict)]
-        messages = [i.get("text", "") for i in items if i.get("type") == "agent_message"]
-        trace = "\n\n".join(filter(None, (_render_codex_item(i) for i in items)))
-        if failed or not any(e.get("type") == "turn.completed" for e in events):
-            error = (failed or {}).get("error")
-            message = error.get("message") if isinstance(error, dict) else error
-            raise BackendError(f"codex error: {str(message or 'turn did not complete')[:500]}")
-        return AgentResult(messages[-1] if messages else "", trace, ok=True)
-
-
-def _join(system: str | None, prompt: str) -> str:
-    return f"{system.strip()}\n\n---\n\n{prompt}" if system else prompt
-
-
-def _render_codex_item(item: dict) -> str:
-    itype = item.get("type")
-    if itype == "agent_message":
-        return f"**assistant:** {item.get('text', '').strip()}"
-    if itype == "reasoning":
-        return f"**reasoning:** {item.get('text', '').strip()}"
-    if itype == "command_execution":
-        return (f"**tool call `shell`:**\n{_block(str(item.get('command')))}\n\n"
-                f"**tool output (exit {item.get('exit_code')}):**\n{_block(str(item.get('aggregated_output', '')))}")
-    if itype == "error":
-        return ""  # CLI warnings (hooks, model metadata) are not part of the agent's trajectory
-    payload = {k: v for k, v in item.items() if k != "id"}
-    return f"**{itype}:**\n{_block(json.dumps(payload, ensure_ascii=False, indent=1))}"
 
 
 BACKENDS = {"claude": ClaudeBackend, "codex": CodexBackend}
