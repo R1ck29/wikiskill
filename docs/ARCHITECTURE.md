@@ -129,7 +129,8 @@ wikiskill/
   workspace.py    3 層のフォルダ構成、raw の書き込み一回限り保証、state.json、OS のファイルロックと順番待ち、旧 gen-NNN 形式の解決
   config.py       suite.json / tasks.jsonl の読み込みと検証
   splits.py       split を書かないタスクの train / val / test の自動振り分け
-  backends.py     claude / codex CLI の呼び出し（タイムアウト・中断時のプロセス停止、再試行、報告された費用での 1 日の上限）
+  backends.py     claude / codex CLI の呼び出し（版の判定、タイムアウト・中断時のプロセス停止、失敗の種類に応じた再試行、報告された費用での 1 日の上限、設定ファイル）
+  agent_cli/      CLI ごとの知識（版と機能の表、引数の組み立て、出力の解析、失敗の分類）。プロセスもファイルも扱わない純粋な関数で、wikiskill を import しない
   util.py         UTF-8 入出力、OS のファイルロック、LLM 出力からの JSON 抽出、切り詰め、CSV のエスケープ
   prompts/        Wiki メンテナとスキル提案者のシステムプロンプト（論文付録 E.2 / E.3）
 ```
@@ -150,12 +151,14 @@ tools/integrate.py                             グローバル設定・プラグ
 CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼むときの手順と、利用者が貼り付ける文章
 ```
 
-依存の向きは `cli → improve → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → config/patching/workspace → splits/util` の一方向です。
+依存の向きは `cli → improve → evolve/evaluate/review → rollout/maintainer/proposer → scoring/skills/backends → agent_cli/config/patching/workspace → splits/util` の一方向です。再設計の方針と今後の段階は [design/REDESIGN.md](design/REDESIGN.md) にあります。
 
 拡張するときに触る場所:
 
 - **採点方法を追加**: `config.py` の `SCORER_TYPES`（正解必須なら `ANSWER_REQUIRED` も）と、`scoring.py` の `Scorer.auto`
-- **CLI を追加**: `backends.py` で `CLIBackend` を継承したクラスを作って `DEFAULTS` と `BACKENDS` に登録し、`cli.py` の `--backend` の選択肢に加える
+- **新しい版の CLI に合わせる**: `agent_cli/capabilities.py` の `CAPABILITIES` に「機能名 → 最初の版」を 1 行足し、`base_args` / `call_args` でその機能を使う。
+  失敗の新しい文面は `agent_cli/errors.py` の表に足し、実際の出力を `tests/test_agent_cli.py` に固定する
+- **CLI を追加**: `agent_cli` の `KINDS`・`base_args`・`parse_output` に追加し、`backends.py` で `CLIBackend` を継承したクラスを作って `BACKENDS` に登録し、`cli.py` の `--backend` の選択肢に加える
 
 ## 4. 論文との対応と差分
 
@@ -188,7 +191,7 @@ CLAUDE.md, INSTALL_PROMPT.md                   Claude に組み込みを頼む�
 8. **置換対象が複数箇所に一致する編集は失敗扱い**: 意図しない箇所の書き換えを防ぐためです。
 9. **長い実行記録は先頭と末尾を残して切り詰め**: 最終回答が末尾にあるためです。
 10. **採用結果を PURPOSE.md の履歴に 1 行追記**し、skill-impact.md には提案の PURPOSE.md も記録します。
-11. **CLI の障害は採点しない**: 障害を「不正解」として wiki や採否判定に混ぜないためです（[CONFIGURATION.md](CONFIGURATION.md) 4 章）。
+11. **CLI の障害は採点しない**: 障害を「不正解」として wiki や採否判定に混ぜないためです。待っても直らない失敗（未ログインなど）と CLI の利用上限では、残りのタスクも始めずに止まります（[CONFIGURATION.md](CONFIGURATION.md) 4 章）。
 
 論文にない追加機能: 人による採点（ハイブリッド / 毎回）、`script`・`llm_judge` などの採点方法、途中再開、
 `evaluate` / `compare` / `export` コマンド、実際の利用からの改善（`feedback`・`forget`・`budget` と `improve`）、例を用意しない始め方（`init --workspace`、`list`）、

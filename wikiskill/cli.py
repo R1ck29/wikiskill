@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
-from .backends import Budget, BudgetExceeded, make_backend
+from .backends import Budget, BudgetExceeded, UsageLimitReached, make_backend
 from .config import ConfigError, Suite, load_suite
 from .evaluate import compare_reports, evaluate
 from .evolve import Evolution, EvolveOptions, has_work
@@ -265,6 +265,10 @@ def _backends(args: argparse.Namespace, budget: Budget | None = None):
     backend = make_backend(args.backend, args.model, args.backend_config, budget)
     separate = args.judge_model and args.judge_model != args.model  # the same model needs no second backend
     judge = make_backend(args.backend, args.judge_model, args.backend_config, budget) if separate else backend
+    for one in {id(backend): backend, id(judge): judge}.values():
+        detect = getattr(one, "detect", None)  # the CLI's version, so the arguments fit it (no model call)
+        if detect:
+            detect()
     return backend, judge
 
 
@@ -292,6 +296,8 @@ def cmd_check(args: argparse.Namespace) -> int:
     print(f"backend {backend.name}: command {backend.config.command!r} -> {exe or 'NOT FOUND'}")
     if not exe:
         return EXIT_CONFIG
+    for line in getattr(backend, "describe", list)():  # the version found and the arguments chosen for it
+        print(f"  {line}")
     if args.no_call:
         return 0
     reply = backend.complete("Reply with exactly the word OK and nothing else.")
@@ -356,7 +362,8 @@ def _cmd_improve(args: argparse.Namespace) -> int:
         return 0
     except BudgetExceeded as e:  # every finished stage is saved: the next run goes on from here
         paused = True
-        print(f"paused: {e}; improvement continues with the first feedback of a new day")
+        when = "after the limit resets" if isinstance(e, UsageLimitReached) else "of a new day"
+        print(f"paused: {e}; improvement continues with the first feedback {when}")
     if args.export:  # also when there is nothing to do, so a missed or manual export is brought up to date
         for message in export_skills(ws.skills, args.export, suite.root):
             print(message)

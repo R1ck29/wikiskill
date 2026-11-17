@@ -16,10 +16,12 @@ python -m wikiskill check --backend codex --model gpt-5.5
 | 表示 | 意味と対処 |
 |---|---|
 | `command 'claude' -> NOT FOUND` | PATH にコマンドがない。CLI をインストールするか、設定ファイルの `command` にフルパスを書く |
-| `error: claude exited 1: ... unknown option` | お使いの CLI のバージョンにない引数がある。設定ファイルで引数を変更（3 章） |
+| `version: claude (version unknown ...)` | `--version` の結果を読めなかった。0.11.0 と同じ引数で動く（設定ファイルの `command` が別のプログラムを指していないか確かめる） |
+| `error: claude exited 1: ... unknown option` | お使いの CLI のバージョンにない引数がある。設定ファイルで引数を書いているならそれを直す。書いていないなら CLI を更新する（3 章） |
 | `codex error: ... model is not supported` | その CLI の既定モデルが使えない。`--model` で使えるモデルを指定 |
 | `error: sum.txt is missing or not 42: ...` | エージェントがツールを使えない。管理者の設定で `bypassPermissions` が禁止されていることが多いので、3 章の例のように許可するツールを指定する |
-| `claude error: ... authentication` などの認証エラー | `claude -p "hello"` が単体で動くようにする（4 章「認証」） |
+| `claude error: Not logged in ...` などの認証エラー | `claude -p "hello"` が単体で動くようにする（4 章「認証」）。認証の失敗はやり直さずにすぐ止まる |
+| `error: the usage limit of ... is reached` | CLI の契約の利用上限。表示されたリセットの時刻を過ぎてから同じコマンドを実行する（自動の改善は次の記録で続きから再開する） |
 | `run_agent(): ok=True answer='42' sum.txt='42'` | 準備完了 |
 
 `--model` を省略すると CLI 自身の既定モデルが使われます。`check` のエージェント実行は、シェルで足し算をして結果をファイルに書かせる
@@ -33,8 +35,19 @@ WikiSkill が行う呼び出しは 2 種類です。
 - **エージェント実行**（推論エージェント）: 一時作業フォルダの中でツールを使ってタスクを解く
 
 プロンプトは標準入力、長いシステムプロンプトは一時ファイルで渡し、コマンドラインには短い引数だけを置きます
-（Windows のコマンド長制限と `.cmd` 経由での引用符崩れを避けるため）。既定の引数は `claude 2.1.295` と
-`codex-cli 0.146.1` で動作を確認した値です（`wikiskill/backends.py` の `DEFAULTS`）。
+（Windows のコマンド長制限と `.cmd` 経由での引用符崩れを避けるため）。
+
+WikiSkill は実行の前に `claude --version` / `codex --version` を 1 回だけ実行し、その版に合った引数を選びます
+（`check` の `version:` と `... arguments` の行に表示。選び方は `wikiskill/agent_cli/capabilities.py`）。
+版を読み取れないときは下の表の引数をそのまま使います。下の表は `claude 2.1.295`〜`2.1.325` と `codex-cli 0.146.1`〜`0.169.0` で
+受け付けられることを確かめた値です。版がわかったときの違いは次のとおりです。
+
+- claude 2.1.169 より前（`--safe-mode` が無い）: `--safe-mode` を外す
+- claude の版がわかったとき: エージェント実行で、作業フォルダの外や実行の後に作用する道具
+  （`CronCreate`・`CronDelete`・`CronList`・`ScheduleWakeup`・`PushNotification`・`SendMessage`・`RemoteTrigger`）も `--disallowedTools` に加える
+- claude の上限つきの実行: 1 回の呼び出しに、今日の残りの金額を `--max-budget-usd` で付ける
+- codex: 版による違いはありません。0.169.0 の `--trust`（一時フォルダの信頼を保存してしまう）と `--ignore-user-config`
+  （`config.toml` に書いたモデルの接続先も読まなくなる）は使いません
 
 | キー | claude | codex |
 |---|---|---|
@@ -126,13 +139,24 @@ python -m wikiskill evolve my-suite --workspace workspaces/my --backend-config b
   `cannot lock ... keep WikiSkill folders on a local drive` と表示して止まります。
 - **WikiSkill 自身の通信**: ありません（ネットワーク系モジュールを使っていないことを `tests/test_no_network.py` で確認しています）。
   モデルへの通信は CLI 経由です。エージェントがシェル経由で外部に接続できるかどうかは、CLI とネットワークの設定によります。
-- **`--safe-mode` が使えない CLI**: 古い claude では `unknown option` になります。`complete_args` / `agent_args` から外してください。
+- **`--safe-mode` が使えない CLI**: 古い claude（2.1.169 より前）では、版を見て自動で外します。設定ファイルに `complete_args` / `agent_args` を
+  書いている場合は書いたとおりに使うので、そこから外してください。
 - **Windows での自動の改善**: 隠れたコンソールで動くため、ウィンドウは開きません。止めたいときはタスクマネージャーで
   `python` を終了するか、スイートの `improve.json` を消して次から起動しないようにします。
 - **Codex の個人設定**: `codex exec` は `~/.codex` 配下の個人設定（インストール済みスキルなど）を読み込みます
-  （codex-cli 0.146.1 で確認）。`--safe-mode` に当たる指定は使っていないため、実験を純粋にしたい場合は Codex 側で無効化してください。
-- **CLI の障害**: タイムアウトや API エラーは自動で再試行し、それでも失敗したタスクは**採点せずに**処理を止めます
+  （codex-cli 0.146.1 で確認）。`--safe-mode` に当たる指定は既定では使っていません。codex-cli 0.169.0 からは `--ignore-user-config` で
+  `config.toml` を読まずに実行できるので、実験を純粋にしたい場合は設定ファイルの `complete_args` / `agent_args` に足してください
+  （モデルの接続先を `config.toml` に書いている環境では動かなくなります）。
+- **CLI の障害**: タイムアウト・一時的な混雑（429）・サーバーの障害は自動で再試行し、それでも失敗したタスクは**採点せずに**処理を止めます
   （障害を「不正解」として wiki や採否判定に混ぜないため）。同じコマンドを再実行すると、失敗したタスクだけをやり直します。
+  待っても直らない失敗（未ログイン・請求の問題・使えないモデル・CLI が受け付けない引数）は、やり直さずに最初の 1 回で止まり、対処を表示します。
+  CLI の利用上限は 1 日の上限と同じ扱いで止まり、完了した段階は残ります。
+- **定期実行・`/loop` から使う場合**: Claude Code 2.1.325 から、`allowed-tools` を宣言したスキル（wikiskill もそう）は、
+  定期実行と `/loop` で使う前に確認が出ます。無人で動かすには、設定ファイルの `permissions.allow` に `Skill(wikiskill)`
+  （プラグインとして入れた場合は `Skill(wikiskill:wikiskill)`）を足してください。
+- **Bash のサンドボックスを有効にしている場合**: Claude Code 2.1.325 から、サンドボックスの中の Bash も通常どおり確認を求めます。
+  wikiskill のスキルは `run_wikiskill.py` から `claude` / `codex` を起動し、`~/wikiskill-work` に書き込むので、サンドボックスの中では動きません。
+  `sandbox.excludedCommands` に `run_wikiskill.py` の実行を加えるなど、サンドボックスの外で動かす設定が必要です（導入先で確かめてください）。
 - **データの保存先**: 実行記録・作業フォルダのコピー・レビューシートは、`evolve` ではワークスペース、`evaluate` と `review` では
   `--out` のフォルダに保存されます。業務データを含むため、共有フォルダや Git に置かないでください。
 
