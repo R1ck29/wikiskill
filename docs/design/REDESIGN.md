@@ -1,7 +1,7 @@
 # WikiSkill 再設計（設計書）
 
 - 対象: wikiskill 0.11.0（`main` の 0d9a101）からの再設計
-- 状態: 第 0 段階（この PR）を実装中（進み具合は 9 章のチェック欄）。第 1 段階以降は 9 章の作業指示に従って別の PR で実装する
+- 状態: 第 0 段階（この PR）を実装済み（6.2・6.3 節は実装に合わせて更新済み）。第 1 段階以降は 9 章の作業指示に従って別の PR で実装する
 - 実測した環境: Linux、Python 3.13.5、Claude Code 2.1.325、codex-cli 0.169.0（2026-11-17）
 
 この文書は、後続の段階をほかの実装者（別のモデルを含む）がこの文書だけで進められるように書いています。
@@ -72,7 +72,12 @@ cli.py (580 行)  ── コマンド定義。上限（Budget）の組み立て�
 | M6 | Claude Code 自身の利用上限の文面（この作業中に別の実行で発生） | `You've hit your 5-hour limit · resets 5:10am (Asia/Tokyo)`、エラー種別は `rate_limit`、HTTP 429。**HTTP 429 だけでは一時的な混雑と利用上限を区別できない**ので、文面で見分ける必要がある |
 | M7 | `codex exec --help`（0.169.0） | 新しい引数: `--trust`（「Save trust for this project and future chats … Persists even with --ephemeral」）、`--ignore-user-config`（「Do not load `$CODEX_HOME/config.toml`; auth still uses `CODEX_HOME`」）、`--ignore-rules`、`--strict-config`、`--dangerously-bypass-hook-trust`、`--approve-for-me`。`--full-auto` は一覧にない |
 
-追加の実測（禁止する道具の指定、`--tools ""` の効き方、codex の設定キー）は実装時に行い、この表に追記する。
+| M8 | M4 の `--disallowedTools` に `CronCreate,CronDelete,CronList,ScheduleWakeup,PushNotification,SendMessage,RemoteTrigger,NoSuchToolXyz` を足す | 引数の誤りにならない（存在しない道具名も受け付ける）。`tools` は 16 個になり、足した 6 個が消える（`RemoteTrigger` はこの環境では元から無い）。Bash・Read・Write・Edit・Task は残る |
+| M9 | claude `--safe-mode --output-format stream-json --verbose --tools ""` | `tools` は 0 個、`permissionMode` は `default`。テキスト生成の `--tools ""` は今も道具をすべて外す |
+| M10 | 実装後の `python -m wikiskill check`（claude 未ログイン / codex 利用上限） | claude: 版 `2.1.325` を表示し、1 回の呼び出しで `claude error: Not logged in · Please run /login; make `claude` work on its own (log in or set the API key), then run the same command again` と止まる（0.11.0 は 3 回試して 30 秒待っていた）。codex: `error: the usage limit of `codex` is reached (… try again at Nov 19th, 2026 9:03 AM.)` で 1 回で止まる。どちらも `check` 全体で 1〜3 秒 |
+
+M8 から、禁止する道具の名前は版に無いものを書いても害が無いことがわかったので、`outside_tools` は「版がわかれば足す」とした（6.2 節）。
+それでも版が読めないときに足さないのは、2.1.295 より前の CLI で確かめていないためである。
 
 ### Claude Code 2.1.296〜2.1.325 の変更のうち関係するもの
 
@@ -162,7 +167,8 @@ class CallSpec:
     max_cost_usd: float | None = None  # この 1 回の費用の上限（対応する CLI だけ）
 
 def base_args(kind: str, mode: str, info: CliInfo) -> tuple[str, ...]   # 版に合わせた固定部分
-def call_args(kind: str, spec: CallSpec, base: Sequence[str], info: CliInfo, model_flag: str) -> list[str]
+def call_args(kind: str, base: Sequence[str], spec: CallSpec, info: CliInfo | None = None,
+              model_flag: str | None = None) -> list[str]     # base + モデル・システムプロンプト・作業フォルダ・費用の上限
 def join_prompt(kind: str, system: str | None, prompt: str) -> str      # codex は system を先頭に付ける
 
 @dataclass(frozen=True)
@@ -188,11 +194,16 @@ class Outcome:
     trace: str                         # 読める形の実行記録（Markdown）
     usage: Usage | None
     error: CallError | None
+    finished: bool                     # 結果のイベントまで届いたか（失敗の結果も含む）
     cli_version: str | None            # 出力に含まれていれば（claude の system/init）
-    finished: bool                     # 結果のイベントまで届いたか
+    meta: dict                         # num_turns・duration_ms・subtype・terminal_reason・credential_expires_at（あれば）
 
-def parse_output(kind: str, mode: str, stdout: str) -> Outcome
-def classify_exit(kind: str, returncode: int, stderr: str) -> CallError   # 出力が無いまま終了したとき
+def parse_output(kind: str, mode: str, stdout: str) -> Outcome          # 例外を出さない。切れた出力は error.kind="incomplete"
+def json_lines(stdout: str) -> list[dict]                               # JSON の行だけを拾う
+def classify(message: str, category: str | None = None, status: int | None = None,
+             subtype: str | None = None) -> CallError                    # 出力の中で報告された失敗
+def classify_exit(returncode: int, stderr: str) -> CallError             # 出力が無いまま終了したとき
+RETRYABLE: frozenset[str]; FATAL: frozenset[str]                         # 下の表の「やり直す」「止める」
 ```
 
 エラーの種類（`CallError.kind`）:
@@ -208,6 +219,8 @@ def classify_exit(kind: str, returncode: int, stderr: str) -> CallError   # 出�
 | `rate_limit` | 一時的な混雑（429） | ○ | × | 状態 429、`rate_limit`、`Too many requests` |
 | `overloaded` | サーバー側の障害（5xx・529） | ○ | × | `overloaded`、`server_error`、状態 500 以上 |
 | `incomplete` | 出力が途中で切れた・結果のイベントが無い | ○ | × | 解析結果 |
+| `timeout` | 制限時間を超えた | ○ | × | 呼び出し側（`backends._run`）が付ける |
+| `not_found` | コマンドが PATH に無い | × | ×（`run_agent` は今までどおり `infra_error` で返す） | 呼び出し側が付ける |
 | `unknown` | 上のどれでもない | ○ | × | 既定（0.11.0 と同じ扱い） |
 
 機能表（`agent_cli/capabilities.py`）は「機能名 → その CLI で使える最初の版」の辞書で、版を調べた結果と突き合わせる。
@@ -217,7 +230,7 @@ def classify_exit(kind: str, returncode: int, stderr: str) -> CallError   # 出�
 |---|---|---|---|
 | claude | `safe_mode` | 2.1.169 | 無ければ `--safe-mode` を外す（今は利用者が設定ファイルで外している） |
 | claude | `max_budget_usd` | 2.0.28 | 上限つきの実行で、残りの金額を `--max-budget-usd` に渡す（P4） |
-| claude | `scheduling_tools` | 版を確認できたとき | エージェント実行で、作業フォルダの外や実行の後に作用する道具（`CronCreate`・`CronDelete`・`CronList`・`ScheduleWakeup`・`PushNotification`・`SendMessage`・`RemoteTrigger`）を禁止に加える（P5） |
+| claude | `outside_tools` | 版を確認できたとき（表では `(0,)`） | エージェント実行で、作業フォルダの外や実行の後に作用する道具（`CronCreate`・`CronDelete`・`CronList`・`ScheduleWakeup`・`PushNotification`・`SendMessage`・`RemoteTrigger`）を禁止に加える（P5） |
 | claude | `bare_default` | 未定（将来） | `-p` の既定が `--bare` になった版で、打ち消す引数を足す |
 | codex | `ignore_user_config` | 0.169.0 で確認（導入された版は未確認） | 既定では使わない（4 章） |
 
@@ -242,18 +255,25 @@ def classify_exit(kind: str, returncode: int, stderr: str) -> CallError   # 出�
 
 ```
 BackendError(message, kind="unknown")     # .kind / .retryable / .fatal を持つ。今までの except BackendError はそのまま動く
-  ├ StoppedError                          # Ctrl+C（今までどおり）
-  └ FatalBackendError                     # auth / billing / bad_option / bad_model: やり直さず、run_agent からもそのまま送出
-BudgetExceeded(RuntimeError)              # 今までどおり
-  └ UsageLimitReached                     # usage_limit / cost_cap: `improve` は「paused」として扱い、続きから再開できる
+  └ StoppedError                          # Ctrl+C（今までどおり。kind="stopped"）
+BudgetExceeded(RuntimeError)              # 今までどおり。cost_cap（1 回の上限に達した）もこれで止まる
+  └ UsageLimitReached                     # usage_limit: `improve` は「paused」として扱い、続きから再開できる
 ```
+
+止めるべき失敗を別のクラスにせず `BackendError.fatal` で表したのは、`except BackendError` で受けている既存の呼び出し側
+（`maintainer.py`・`proposer.py`・`scoring.py` はいずれも `RuntimeError` / `BackendError` として扱う）を一切変えずに済むためである。
+
+実装で足した名前: `BackendConfig.pinned`（設定ファイルが引数を書いたモード。ファイルのキーではない）、`CLIBackend.cli`・`detect()`・`base_args(mode)`・
+`describe()`（`check` の表示）、`Budget.remaining()`（今日の残り。共有の上限があれば近いほう）、`UsageLimitReached`、`VERSION_TIMEOUT`。
+`DEFAULTS` は `agent_cli.base_args`（版が不明なとき）から作るので、0.11.0 と同じ値のまま 1 か所で決まる。
 
 - `retryable` な失敗だけを `retries` 回やり直す。待ち方は今までと同じ（`retry_wait × 回数`）。
 - `fatal` な失敗は `run_agent` が `infra_error` に包まずに送出する。並列のロールアウトは最初の例外で残りを止める仕組み
   （`rollout.py:119-126`）をすでに持っているので、未ログインのまま全タスクを 3 回ずつ試すことがなくなる。
 - 利用上限（`UsageLimitReached`）は `BudgetExceeded` の一種にする。`improve` はすでに `BudgetExceeded` を「今日は止めて、続きは次回」と扱っている
   （`cli.py:357-359`）ので、同じ経路で止まり、完了した段階は残る。
-- 失敗した呼び出しは `unpriced_calls` に数えない（codex が上限で失敗しただけで「費用を報告しない CLI は 1 日 1 回」に当たるのを防ぐ）。
+- CLI がモデルを動かす前に拒んだ呼び出し（`fatal` な失敗）は `unpriced_calls` に数えない（codex が上限で失敗しただけで「費用を報告しない CLI は 1 日 1 回」に当たるのを防ぐ）。
+  費用が報告された呼び出しは、失敗でもその費用を数える（今までどおり）。
 
 ### 6.4 `budget.py`（第 1 段階）
 
@@ -403,10 +423,11 @@ v1 のまま。足すのは `wiki/archive/`・`wiki/lint.json` と `spend.json` 
 ### 第 0 段階（この PR）
 
 - [x] 設計書（この文書）
-- [ ] `wikiskill/agent_cli/`: 版の判定、機能表、引数の組み立て、出力の解析、エラーの分類（6.2 節）
-- [ ] `backends.py` をその上に載せ替え（6.3 節）。古い設定ファイルの互換をテストで固定
-- [ ] `check` に版・引数の決まり方の表示を追加
-- [ ] `CHANGELOG.md`、0.12.0、ドキュメントの該当箇所
+- [x] `wikiskill/agent_cli/`: 版の判定、機能表、引数の組み立て、出力の解析、エラーの分類（6.2 節）
+- [x] `backends.py` をその上に載せ替え（6.3 節）。古い設定ファイルの互換をテストで固定
+- [x] `check` に版・引数の決まり方の表示を追加
+- [x] `CHANGELOG.md`、0.12.0、ドキュメントの該当箇所（`docs/CONFIGURATION.md`・`docs/ARCHITECTURE.md`）
+- [x] テスト: `tests/test_agent_cli.py`（実測した出力で解析と分類を固定）、`tests/test_adapter.py`（版の判定・固定した引数・止まる失敗をプロセス越しに確認）。既存のテストは変更なし
 
 ### 第 1 段階: 上限の集約と、導入先での確認が要る修正（小さい PR を 3 つ）
 
@@ -448,7 +469,14 @@ v1 のまま。足すのは `wiki/archive/`・`wiki/lint.json` と `spend.json` 
 
 ## 10. 関連する実装との比較
 
-（この節は、この PR の中で資料を確認してから追記する。）
+2026-11-17 に各リポジトリの README とファイル構成を確認した範囲での比較。
+
+| 実装 | 関係する特徴 | 取り入れたこと / 取り入れないこと |
+|---|---|---|
+| [ashutoshsinghpr7/wikiskill](https://github.com/ashutoshsinghpr7/wikiskill)（Python） | 同じ論文の実装。既定は Hermes Agent で、`wikiskill/backends/` に `base.py`・`claude.py`・`codex.py`・`copilot.py`・`hermes.py`・`transcript.py` を持つ。CLI ごとに設定フォルダ（`CLAUDE_CONFIG_DIR`・`CODEX_HOME`・`COPILOT_HOME`・`HERMES_HOME`）をワークスペース専用にして分離し、ワークスペースの `workspace.json` に使う CLI を固定する。codex は `codex exec --json --full-auto` | CLI ごとの知識を 1 か所に集める点は同じ方針（`agent_cli`）。**設定フォルダの分離は取り入れない**: 分離したフォルダには認証情報が無いので、CLI ごとにログインし直す必要があり、社内のゲートウェイや Bedrock の設定も読まれなくなる。WikiSkill は `--safe-mode`（認証は通常どおり）で同じ目的を果たす。なお `--full-auto` は codex 0.169.0 の `exec --help` に無い（M7） |
+| [Huangdingcheng/SkillWiki](https://github.com/Huangdingcheng/SkillWiki)（Python、サーバー + UI） | スキルを資産として管理する。8 段階の状態（S0〜S7）、出典と版の履歴、検証の証拠、`depends_on`・`evolved_from`・`replaces` などの型付きの関係を持つグラフ、Git を使った承認の記録 | 「消さずに置き換え関係を残す」考え方を、wiki の統合（6.5 節 (c)）の `retire_patterns[].merged_into` と `wiki/archive/` に最小の形で取り入れる。状態機械・グラフ・サーバーは取り入れない（標準ライブラリだけ・ファイルだけという前提に合わず、WikiSkill の採否は val のスコアで決まる） |
+| [OSU-NLP-Group/SkillWeaver](https://github.com/OSU-NLP-Group/SkillWeaver)（Python、Web エージェント） | スキルを Python の API として合成し、`knowledge_base/` の `code_verification.py`・`type_checking.py`・`check_success.py` で実行や型の検査をしてからライブラリに入れる | 「モデルの判断の前に、機械的に確かめられることは機械で確かめる」順序を wiki の lint（6.5 節 (a)）と統合の採否（lint を通った場合だけ採用）に取り入れる。スキルをコードにする部分は対象外（WikiSkill のスキルは SKILL.md） |
+| Claude Code のスキルとプラグインの仕様（https://code.claude.com/docs/en/skills 、https://code.claude.com/docs/en/plugins ） | `description` と `when_to_use` は一覧で合わせて 1,536 字で切られる。`allowed-tools` は確認なしで使える道具を足すだけで、定期実行・`/loop` では 2.1.325 から確認が出る。`plugin.json` の `engines` は任意 | `skills/wikiskill/SKILL.md` の説明は 225 字で収まっている。`allowed-tools` はやめない（対話での確認を減らすため）。代わりに `Skill(wikiskill)` の許可を組み込みで選べるようにする（6.7 節、第 1 段階）。`engines` は使わない |
 
 ## 11. 参考資料
 
