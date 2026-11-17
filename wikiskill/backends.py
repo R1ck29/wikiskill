@@ -249,12 +249,12 @@ class CLIBackend:
 
     def complete(self, prompt: str, system: str | None = None) -> str:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
-            return self._retry(lambda: self._call("complete", prompt, system, Path(tmp), Path(tmp))).text
+            return self._retry(lambda: self._call("complete", prompt, system, Path(tmp), Path(tmp)), "complete").text
 
     def run_agent(self, prompt: str, system: str | None, cwd: Path) -> AgentResult:
         with tempfile.TemporaryDirectory(prefix="wikiskill-") as tmp:
             try:
-                outcome = self._retry(lambda: self._call("agent", prompt, system, Path(cwd), Path(tmp)))
+                outcome = self._retry(lambda: self._call("agent", prompt, system, Path(cwd), Path(tmp)), "agent")
             except BackendError as e:
                 if e.fatal:  # every other task would fail the same way: stop the run, do not score an outage
                     raise
@@ -354,14 +354,14 @@ class CLIBackend:
             raise BackendError(message, error.kind)
         return stdout
 
-    def _retry(self, call: Callable):
+    def _retry(self, call: Callable, mode: str | None = None):
         attempts = self.config.retries + 1
         attempt = 1
         while True:
             try:
                 return call()
             except BackendError as e:
-                if e.kind == "bad_option" and self._adapt():
+                if e.kind == "bad_option" and self._adapt(mode):
                     log.warning("%s rejected an argument (%s); trying again with the arguments for %s",
                                 self.config.command, e, self.cli.label())
                     continue  # not counted as an attempt: the arguments changed, and this happens once
@@ -374,14 +374,14 @@ class CLIBackend:
                     raise StoppedError("stopped by the user") from e
                 attempt += 1
 
-    def _adapt(self) -> bool:
+    def _adapt(self, mode: str | None) -> bool:
         """After the CLI rejected an argument: look up its version if nobody did; True when that changes
-        the arguments of a call (a library user who never called detect() gets the right ones this way)."""
-        if self._detected:
+        the arguments of this call (a library user who never called detect() gets the right ones this way)."""
+        if self._detected or mode is None:
             return False
-        before = [self.base_args(mode) for mode in agent_cli.MODES]
+        before = self.base_args(mode)
         self.detect()
-        return before != [self.base_args(mode) for mode in agent_cli.MODES]
+        return before != self.base_args(mode)
 
     # ----- kept for callers of 0.11.0 --------------------------------------------------
     def _parse_complete(self, stdout: str) -> str:
