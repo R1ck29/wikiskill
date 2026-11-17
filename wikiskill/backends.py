@@ -24,7 +24,6 @@ runs the processes and owns the policy: config files, retries, budgets, which fa
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
 import os
 import re
@@ -294,7 +293,7 @@ class CLIBackend:
                          f"{self.config.kind} {agent_cli.VERIFIED[self.config.kind]}")
         for mode in agent_cli.MODES:
             source = ("set by the backend config, used as written" if mode in self.config.pinned
-                      else "chosen for this version")
+                      else "chosen for this version" if self.cli.version else "defaults")
             shown = " ".join(arg or '""' for arg in self.base_args(mode))
             lines.append(f"{mode} arguments ({source}): {shown}")
         return lines
